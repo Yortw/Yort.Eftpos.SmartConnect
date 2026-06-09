@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Yort.Eftpos.SmartConnect</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Single TFM today; structured as <TargetFrameworks> so adding net8.0 later is a one-line, non-breaking change. Keep the public API netstandard2.0-expressible. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Yort.Eftpos.SmartConnect.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Current LTS majors; both still ship a netstandard2.0 target. Floating patch keeps us on security fixes; pin exactly before first release. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.*" />
+    <PackageReference Include="System.Text.Json" Version="8.0.*" />
+  </ItemGroup>
+
+</Project>
