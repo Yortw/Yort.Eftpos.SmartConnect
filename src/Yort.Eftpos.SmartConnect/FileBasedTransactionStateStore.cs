@@ -38,6 +38,7 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 	}
 
 	/// <inheritdoc />
+	/// <exception cref="IOException">The state file could not be written.</exception>
 	public Task SaveTransactionAttemptAsync(string clientTransactionRef, string transactionType, long amountTotalCents)
 	{
 		var record = new StoredRecord
@@ -57,6 +58,8 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 	}
 
 	/// <inheritdoc />
+	/// <exception cref="InvalidOperationException">No state record exists for the reference, or it is unreadable/corrupt.</exception>
+	/// <exception cref="IOException">The state file could not be written.</exception>
 	public Task UpdatePollingDetailsAsync(string clientTransactionRef, string pollingUrl, string transactionId)
 	{
 		lock (_sync)
@@ -71,6 +74,8 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 	}
 
 	/// <inheritdoc />
+	/// <exception cref="InvalidOperationException">No state record exists for the reference, or it is unreadable/corrupt.</exception>
+	/// <exception cref="IOException">The state file could not be written.</exception>
 	public Task UpdateCompletedAsync(string clientTransactionRef, SmartConnectTransactionStatus status)
 	{
 		lock (_sync)
@@ -85,6 +90,8 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 	}
 
 	/// <inheritdoc />
+	/// <remarks>Individual unreadable/corrupt records and leftover temp files are skipped, not thrown.</remarks>
+	/// <exception cref="IOException">The state directory could not be enumerated.</exception>
 	public Task<IEnumerable<PendingTransaction>> GetPendingTransactionsAsync()
 	{
 		var results = new List<PendingTransaction>();
@@ -118,6 +125,8 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 	}
 
 	/// <inheritdoc />
+	/// <exception cref="InvalidOperationException">The record does not exist, is unreadable/corrupt, or has not reached a terminal state.</exception>
+	/// <exception cref="IOException">The state file could not be deleted.</exception>
 	public Task RemoveAsync(string clientTransactionRef)
 	{
 		lock (_sync)

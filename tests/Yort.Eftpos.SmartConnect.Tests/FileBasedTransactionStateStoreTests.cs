@@ -96,6 +96,14 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 		await Assert.ThrowsAsync<InvalidOperationException>(() => store.RemoveAsync("ref-1"));
 	}
 
+	[Fact]
+	public async Task UpdatePollingDetails_OnMissingRecord_Throws()
+	{
+		var store = NewStore();
+		await Assert.ThrowsAsync<InvalidOperationException>(
+			() => store.UpdatePollingDetailsAsync("does-not-exist", "https://poll", "txn"));
+	}
+
 	// F6: a kill mid-write can leave a *.tmp; recovery must ignore it, not crash or surface it as pending.
 	[Fact]
 	public async Task GetPending_IgnoresLeftoverTempFiles()

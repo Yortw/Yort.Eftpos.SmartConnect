@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -39,8 +40,10 @@ public interface ISmartConnectTransactionState
 	Task<IEnumerable<PendingTransaction>> GetPendingTransactionsAsync();
 
 	/// <summary>
-	/// Removes a completed transaction record. Implementations MUST throw if the record has not reached a
-	/// terminal state — pending transactions cannot be removed.
+	/// Removes a completed transaction record. Implementations MUST throw
+	/// <see cref="InvalidOperationException"/> if the record has not reached a terminal state — pending
+	/// transactions cannot be removed.
 	/// </summary>
+	/// <exception cref="InvalidOperationException">The record has not reached a terminal state.</exception>
 	Task RemoveAsync(string clientTransactionRef);
 }
