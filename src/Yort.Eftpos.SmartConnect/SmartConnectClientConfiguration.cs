@@ -52,11 +52,9 @@ public sealed class SmartConnectClientConfiguration
 	/// <summary>The product version reported in the User-Agent when the client creates its own <see cref="HttpClient"/>.</summary>
 	public string? UserAgentProductVersion { get; set; }
 
-	/// <summary>
-	/// Validates the configuration. Throws <see cref="ArgumentNullException"/> if <see cref="BaseUrl"/> or
-	/// <see cref="StateStore"/> is null, and <see cref="ArgumentOutOfRangeException"/> if <see cref="PollInterval"/>
-	/// is below <see cref="MinimumPollInterval"/>.
-	/// </summary>
+	/// <summary>Validates the configuration, throwing if a required value is missing or out of range.</summary>
+	/// <exception cref="ArgumentNullException"><see cref="BaseUrl"/> or <see cref="StateStore"/> is null.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><see cref="PollInterval"/> is below <see cref="MinimumPollInterval"/>.</exception>
 	public void Validate()
 	{
 		if (BaseUrl == null)

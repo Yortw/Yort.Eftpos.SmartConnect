@@ -13,6 +13,7 @@ internal static class UuidV5
 	/// <summary>
 	/// Creates a deterministic version-5 UUID from a namespace and a name, per RFC 4122.
 	/// </summary>
+	/// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
 	public static Guid Create(Guid namespaceId, string name)
 	{
 		if (name == null)
