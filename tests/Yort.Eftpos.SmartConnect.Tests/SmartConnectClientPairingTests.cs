@@ -157,13 +157,65 @@ public class SmartConnectClientPairingTests
 	}
 
 	[Fact]
-	public async Task PairAsync_NetworkFailure_Throws()
+	public async Task PairAsync_TransportFailure_ThrowsSmartConnectTransportException()
 	{
-		// Pairing is a one-shot interactive operation, not polled — transport failures propagate to the caller.
-		var handler = new MockHttpHandler(_ => throw new HttpRequestException("Connection refused"));
+		// Pairing is one-shot, not polled — transport failures propagate, but always as the library's
+		// typed exception (ADR Decision 9), never a raw BCL exception.
+		var original = new HttpRequestException("send failed", new System.Net.Sockets.SocketException(10061 /* ConnectionRefused */));
+		var handler = new MockHttpHandler(_ => throw original);
 		using var client = new SmartConnectClient(CreateConfiguration(handler));
 
-		await Assert.ThrowsAsync<HttpRequestException>(() => client.PairAsync("12345678", CreatePairingRequest()));
+		var thrown = await Assert.ThrowsAsync<SmartConnectTransportException>(() => client.PairAsync("12345678", CreatePairingRequest()));
+
+		Assert.Equal(SmartConnectRequestDelivery.NotSent, thrown.Delivery);
+		Assert.Same(original, thrown.InnerException);
+	}
+
+	[Fact]
+	public async Task PairAsync_Timeout_ThrowsTransportExceptionWithDeliveryUnknown()
+	{
+		var handler = new MockHttpHandler(_ => throw new TaskCanceledException("timed out"));
+		using var client = new SmartConnectClient(CreateConfiguration(handler));
+
+		var thrown = await Assert.ThrowsAsync<SmartConnectTransportException>(() => client.PairAsync("12345678", CreatePairingRequest()));
+
+		Assert.Equal(SmartConnectRequestDelivery.Unknown, thrown.Delivery);
+	}
+
+	[Fact]
+	public async Task PairAsync_TransportException_IsCatchableAsSmartConnectException()
+	{
+		// The umbrella contract: one base type catches everything operational the library throws.
+		var handler = new MockHttpHandler(_ => throw new HttpRequestException("send failed"));
+		using var client = new SmartConnectClient(CreateConfiguration(handler));
+
+		await Assert.ThrowsAnyAsync<SmartConnectException>(() => client.PairAsync("12345678", CreatePairingRequest()));
+	}
+
+	[Fact]
+	public async Task PairAsync_AuthCallbackThrows_PropagatesUnwrapped()
+	{
+		// (R3-adjacent invariant) The transport wrap covers the HTTP exchange only — the consumer's own
+		// AuthorizeRequestAsync code throwing is their bug and must not be disguised as a transport failure.
+		var configuration = CreateConfiguration(SuccessHandler());
+		configuration.AuthorizeRequestAsync = _ => throw new InvalidOperationException("consumer bug");
+		using var client = new SmartConnectClient(configuration);
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() => client.PairAsync("12345678", CreatePairingRequest()));
+	}
+
+	[Fact]
+	public async Task PairAsync_TransportExceptionMessage_DoesNotContainRequestUrl()
+	{
+		// (R6) The wrapper must not add the request URL to its own message — poll URLs carry the
+		// merchantAccessToken bearer credential, and consumers will log ex.Message.
+		var handler = new MockHttpHandler(_ => throw new HttpRequestException("send failed"));
+		using var client = new SmartConnectClient(CreateConfiguration(handler));
+
+		var thrown = await Assert.ThrowsAsync<SmartConnectTransportException>(() => client.PairAsync("12345678", CreatePairingRequest()));
+
+		Assert.DoesNotContain("unit.test", thrown.Message);
+		Assert.DoesNotContain("12345678", thrown.Message);
 	}
 
 	[Fact]

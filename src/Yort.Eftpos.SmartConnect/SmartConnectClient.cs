@@ -70,7 +70,8 @@ public sealed class SmartConnectClient : IDisposable
 	/// <exception cref="ArgumentNullException"><paramref name="pairingCode"/> or <paramref name="request"/> is null.</exception>
 	/// <exception cref="ArgumentException"><paramref name="pairingCode"/> is empty/whitespace, or a mandatory field of <paramref name="request"/> is blank.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
-	/// <exception cref="HttpRequestException">The service could not be reached.</exception>
+	/// <exception cref="SmartConnectTransportException">The exchange could not be completed — no answer was
+	/// received. Check <see cref="SmartConnectTransportException.Delivery"/> before retrying.</exception>
 	public async Task<SmartConnectPairingResult> PairAsync(string pairingCode, SmartConnectPairingRequest request)
 	{
 		if (pairingCode == null)
@@ -149,16 +150,30 @@ public sealed class SmartConnectClient : IDisposable
 	}
 
 	// (F3) The single outbound send path: every request — pairing PUT, transaction POST, poll GET — must go
-	// through here so the optional auth seam can never be bypassed by a future call site.
+	// through here so the optional auth seam can never be bypassed and no raw BCL transport exception can
+	// leak from a future call site (ADR Decision 9).
 	private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
 	{
+		// Consumer code — deliberately OUTSIDE the transport wrap so a bug in their callback isn't
+		// disguised as a transport failure.
 		var authorize = _config.AuthorizeRequestAsync;
 		if (authorize != null)
 		{
 			await authorize(request).ConfigureAwait(false);
 		}
 
-		return await _httpClient.SendAsync(request).ConfigureAwait(false);
+		try
+		{
+			// The default HttpCompletionOption.ResponseContentRead buffers the body during this call, so
+			// mid-body network failures surface inside this wrap; later ReadAsStringAsync calls read from
+			// the buffer and cannot fail on network. Do not change the completion option without
+			// revisiting that assumption.
+			return await _httpClient.SendAsync(request).ConfigureAwait(false);
+		}
+		catch (Exception ex) when (TransportFailureClassifier.IsTransportFailure(ex))
+		{
+			throw new SmartConnectTransportException(TransportFailureClassifier.Classify(ex), ex);
+		}
 	}
 
 	internal static HttpClientHandler CreateHandler()
