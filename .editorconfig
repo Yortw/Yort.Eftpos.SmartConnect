@@ -1,0 +1,34 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = tab
+
+[*.{yml,yaml,json,md}]
+indent_style = space
+indent_size = 2
+
+[*.sln]
+end_of_line = crlf
+
+[*.cs]
+indent_style = tab
+
+# File-scoped namespaces — this repo's deliberate modern choice for greenfield.
+csharp_style_namespace_declarations = file_scoped:warning
+
+# Allman braces: opening brace on its own line for all constructs.
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+
+# Always use braces, even for single-statement bodies.
+csharp_prefer_braces = true:warning
+
+# Usings outside the namespace, System first.
+csharp_using_directive_placement = outside_namespace:warning
+dotnet_sort_system_directives_first = true
