@@ -1,5 +1,3 @@
-using System;
-
 namespace Yort.Eftpos.SmartConnect;
 
 /// <summary>
@@ -12,29 +10,11 @@ public sealed class SmartConnectTransactionRequest
 	/// <summary>The SmartConnect transaction type. See <see cref="SmartConnectTransactionType"/>.</summary>
 	public string TransactionType { get; set; } = SmartConnectTransactionType.CardPurchase;
 
-	/// <summary>The total amount in minor units (cents). Authoritative.</summary>
-	public long AmountTotalCents { get; set; }
+	/// <summary>The total amount.</summary>
+	public Money AmountTotal { get; set; }
 
-	/// <summary>
-	/// The total amount in major units (dollars). A convenience over <see cref="AmountTotalCents"/>:
-	/// the getter divides by 100; the setter rounds to whole cents (away from zero). Inputs should already
-	/// be cents-precise (≤2 decimal places).
-	/// </summary>
-	public decimal AmountTotal
-	{
-		get => AmountTotalCents / 100m;
-		set => AmountTotalCents = (long)Math.Round(value * 100m, MidpointRounding.AwayFromZero);
-	}
-
-	/// <summary>The cash-out amount in minor units (cents), for purchase-plus-cash. Authoritative.</summary>
-	public long AmountCashCents { get; set; }
-
-	/// <summary>The cash-out amount in major units (dollars). Convenience over <see cref="AmountCashCents"/>.</summary>
-	public decimal AmountCash
-	{
-		get => AmountCashCents / 100m;
-		set => AmountCashCents = (long)Math.Round(value * 100m, MidpointRounding.AwayFromZero);
-	}
+	/// <summary>The cash-out amount, for purchase-plus-cash.</summary>
+	public Money AmountCash { get; set; }
 
 	/// <summary>The globally-unique register id (UUID format).</summary>
 	public string POSRegisterID { get; set; } = string.Empty;

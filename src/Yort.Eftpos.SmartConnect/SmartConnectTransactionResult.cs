@@ -32,23 +32,14 @@ public sealed class SmartConnectTransactionResult
 	/// <summary>The account type selected (e.g. <c>CREDIT</c>, <c>CHEQUE</c>, <c>SAVINGS</c>).</summary>
 	public string? AccountType { get; init; }
 
-	/// <summary>The total amount in minor units (cents). Authoritative.</summary>
-	public long AmountTotalCents { get; init; }
+	/// <summary>The total amount.</summary>
+	public Money AmountTotal { get; init; }
 
-	/// <summary>The total amount in major units (dollars). Convenience over <see cref="AmountTotalCents"/>.</summary>
-	public decimal AmountTotal => AmountTotalCents / 100m;
+	/// <summary>The surcharge amount applied by the terminal.</summary>
+	public Money AmountSurcharge { get; init; }
 
-	/// <summary>The surcharge amount in minor units (cents).</summary>
-	public long AmountSurchargeCents { get; init; }
-
-	/// <summary>The surcharge amount in major units (dollars).</summary>
-	public decimal AmountSurcharge => AmountSurchargeCents / 100m;
-
-	/// <summary>The tip amount in minor units (cents).</summary>
-	public long AmountTipCents { get; init; }
-
-	/// <summary>The tip amount in major units (dollars).</summary>
-	public decimal AmountTip => AmountTipCents / 100m;
+	/// <summary>The tip amount applied at the terminal.</summary>
+	public Money AmountTip { get; init; }
 
 	/// <summary>
 	/// The device-generated receipt text (fixed-width, newline-delimited). Render as-is in a monospaced
