@@ -49,4 +49,12 @@ public class SmartConnectClientConfigurationTests
 		config.PollInterval = SmartConnectClientConfiguration.MinimumPollInterval;
 		Assert.Null(Record.Exception(() => config.Validate()));
 	}
+
+	// SmartConnect docs specify no transaction/poll timeout. Pinpads self-time-out around ~3 minutes, so a
+	// 5-minute POS-side backstop sits past the device timeout without stranding a customer (10 was too long).
+	[Fact]
+	public void Default_MaxPollDuration_IsFiveMinutes()
+	{
+		Assert.Equal(TimeSpan.FromMinutes(5), new SmartConnectClientConfiguration().MaxPollDuration);
+	}
 }

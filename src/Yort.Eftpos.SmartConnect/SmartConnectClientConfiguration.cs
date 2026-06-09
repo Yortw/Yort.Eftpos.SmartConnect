@@ -20,8 +20,12 @@ public sealed class SmartConnectClientConfiguration
 	/// <summary>The interval between status polls. Default 3s; must be at least <see cref="MinimumPollInterval"/>.</summary>
 	public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(3);
 
-	/// <summary>The maximum total time to poll before returning <see cref="SmartConnectTransactionStatus.Unknown"/>. Default 10 minutes.</summary>
-	public TimeSpan MaxPollDuration { get; set; } = TimeSpan.FromMinutes(10);
+	/// <summary>
+	/// The maximum total time to poll before returning <see cref="SmartConnectTransactionStatus.Unknown"/>.
+	/// Default 5 minutes — a conservative backstop past the terminal's own (~3 minute) timeout. SmartConnect
+	/// does not document a transaction timeout, so this is a client-side safeguard, not a protocol value.
+	/// </summary>
+	public TimeSpan MaxPollDuration { get; set; } = TimeSpan.FromMinutes(5);
 
 	/// <summary>The upper bound for exponential backoff after repeated HTTP 429 responses. Default 30s.</summary>
 	public TimeSpan BackoffCap { get; set; } = TimeSpan.FromSeconds(30);
