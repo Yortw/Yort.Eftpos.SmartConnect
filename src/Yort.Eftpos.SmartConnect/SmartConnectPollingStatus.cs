@@ -9,14 +9,14 @@ namespace Yort.Eftpos.SmartConnect;
 public sealed class SmartConnectPollingStatus
 {
 	/// <summary>The current polling state.</summary>
-	public SmartConnectPollingState State { get; set; }
+	public SmartConnectPollingState State { get; init; }
 
 	/// <summary>An optional human-readable message suitable for display. May be <see langword="null"/>.</summary>
-	public string? Message { get; set; }
+	public string? Message { get; init; }
 
 	/// <summary>
 	/// The underlying exception, populated only when <see cref="State"/> is
 	/// <see cref="SmartConnectPollingState.NetworkError"/>. Detailed diagnostics belong in logs, not the UI.
 	/// </summary>
-	public Exception? Error { get; set; }
+	public Exception? Error { get; init; }
 }

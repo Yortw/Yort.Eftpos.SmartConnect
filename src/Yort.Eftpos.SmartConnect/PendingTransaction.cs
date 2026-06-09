@@ -14,17 +14,17 @@ namespace Yort.Eftpos.SmartConnect;
 public sealed class PendingTransaction
 {
 	/// <summary>The caller-supplied reference that correlates this record across send and recovery.</summary>
-	public string ClientTransactionRef { get; set; } = string.Empty;
+	public string ClientTransactionRef { get; init; } = string.Empty;
 
 	/// <summary>
 	/// The polling URL returned by the initial POST, used to resume polling. <see langword="null"/> when only a
 	/// pre-POST sentinel exists (the crash window the design calls out). Treat as a credential — never log it.
 	/// </summary>
-	public string? PollingUrl { get; set; }
+	public string? PollingUrl { get; init; }
 
 	/// <summary>The server-issued transaction id, if the initial POST response was received.</summary>
-	public string? TransactionId { get; set; }
+	public string? TransactionId { get; init; }
 
 	/// <summary>When the attempt was first recorded (sentinel write), in UTC.</summary>
-	public DateTimeOffset CreatedAt { get; set; }
+	public DateTimeOffset CreatedAt { get; init; }
 }
