@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net48 mirrors the POS clients this library targets; running the same probes on both TFMs is the
+         cross-runtime transport-shape verification (R4). -->
+    <TargetFrameworks>net48;net8.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Yort.Eftpos.SmartConnect.Demo</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Yort.Eftpos.SmartConnect\Yort.Eftpos.SmartConnect.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- HttpClient lives in this framework assembly on .NET Framework; SDK projects don't reference it by default. -->
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+</Project>

@@ -118,6 +118,12 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 - **There is no idempotency key and no programmatic cancel in the SmartConnect API.** A timed-out POST may still have charged the customer — that is what `Unknown` and the recovery flow are for. Do not blind-retry.
 - **Logging:** supply an `ILogger` via `SmartConnectClientConfiguration.Logger` — normal operation, backoff, store trouble, and every ambiguous outcome are logged with the client transaction reference. Logging failures never affect transaction processing.
 
+## Trying it against a real dev terminal
+
+`samples/Yort.Eftpos.SmartConnect.Demo` is an interactive console app (run it from your IDE, or `dotnet run -f net8.0`) that pairs with a dev pinpad and exercises the library end-to-end: purchases, refunds, crash-recovery resume, journal queries, and a no-pinpad-needed transport-failure probe. It is **illustrative, not a production POS** — no receipt printing, no tender integration, no offline handling — but its `Unknown`-handling and progress/logging wiring are the patterns to copy.
+
+Two warnings: financial menu actions send **real transactions** to the connected terminal (the app echoes amounts and asks for confirmation first), and its state directory contains **bearer-token polling URLs** — don't commit it or attach it to bug reports. It multi-targets `net48` and `net8.0`; running the transport probe on both is how the cross-runtime failure-classification gets verified.
+
 ## Licence
 
 MIT (to be added before first release).
