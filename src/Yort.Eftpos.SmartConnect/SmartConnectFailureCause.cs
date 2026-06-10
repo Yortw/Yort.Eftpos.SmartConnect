@@ -28,5 +28,12 @@ public enum SmartConnectFailureCause
 	/// The state store refused the pre-POST sentinel write, so the transaction was never sent (the gate is
 	/// absolute — ADR Decision 10). Safe to retry once the store is healthy.
 	/// </summary>
-	StateStoreFailure = 4
+	StateStoreFailure = 4,
+
+	/// <summary>
+	/// SmartConnect answered the poll with a verdict that the polling URL itself is no good
+	/// (401/403/404/410) — the transaction's outcome cannot be learned by polling. Never blind-retry; fall
+	/// through to the journal-based recovery flow (Layer 2).
+	/// </summary>
+	PollingUrlInvalid = 5
 }

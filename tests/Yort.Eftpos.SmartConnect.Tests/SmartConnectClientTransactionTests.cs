@@ -14,6 +14,20 @@ namespace Yort.Eftpos.SmartConnect.Tests;
 /// </summary>
 public class SmartConnectClientTransactionTests
 {
+
+	private static SmartConnectClient WithVirtualTime(SmartConnectClient client)
+	{
+		// The polling loop is real now: without virtual time, any test whose handler keeps answering
+		// PENDING would poll for the actual MaxPollDuration (minutes of wall-clock per test).
+		var now = new DateTimeOffset(2026, 6, 10, 12, 0, 0, TimeSpan.Zero);
+		client.Clock = () => now;
+		client.PollDelay = delay =>
+		{
+			now += delay;
+			return Task.CompletedTask;
+		};
+		return client;
+	}
 	private const string Ref = "100123-abc";
 
 	private static readonly string InitialResponseJson =
@@ -54,11 +68,12 @@ public class SmartConnectClientTransactionTests
 	public async Task Process_SendsFormEncodedPostToTransactionUrl()
 	{
 		var handler = PendingResponseHandler();
-		using var client = new SmartConnectClient(CreateConfiguration(handler));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler)));
 
 		await client.ProcessTransactionAsync(CreateRequest());
 
-		var request = Assert.Single(handler.Requests);
+		// Requests after the first are poll GETs — the POST itself is always the first request.
+		var request = handler.Requests[0];
 		Assert.Equal(HttpMethod.Post, request.Method);
 		Assert.Equal("https://unit.test/POS/Transaction", request.Uri?.AbsoluteUri);
 		Assert.Equal("application/x-www-form-urlencoded", request.ContentType);
@@ -68,7 +83,7 @@ public class SmartConnectClientTransactionTests
 	public async Task Process_SendsMandatoryFields()
 	{
 		var handler = PendingResponseHandler();
-		using var client = new SmartConnectClient(CreateConfiguration(handler));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler)));
 
 		await client.ProcessTransactionAsync(CreateRequest());
 
@@ -82,7 +97,7 @@ public class SmartConnectClientTransactionTests
 	public async Task Process_PurchasePlusCash_IncludesAmountCash()
 	{
 		var handler = PendingResponseHandler();
-		using var client = new SmartConnectClient(CreateConfiguration(handler));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler)));
 
 		var request = CreateRequest();
 		request.TransactionType = SmartConnectTransactionType.CardPurchasePlusCash;
@@ -99,7 +114,7 @@ public class SmartConnectClientTransactionTests
 	{
 		// Invariant: AmountCash rides only on PurchasePlusCash — even if a caller sets it on another type.
 		var handler = PendingResponseHandler();
-		using var client = new SmartConnectClient(CreateConfiguration(handler));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler)));
 
 		var request = CreateRequest();
 		request.AmountCash = Money.FromCents(250);
@@ -113,7 +128,7 @@ public class SmartConnectClientTransactionTests
 	{
 		// Vendor reference pairs Card.Authorise with Card.Finalise.
 		var handler = PendingResponseHandler();
-		using var client = new SmartConnectClient(CreateConfiguration(handler));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler)));
 
 		var request = CreateRequest();
 		request.TransactionReference = "preauth-77";
@@ -132,7 +147,7 @@ public class SmartConnectClientTransactionTests
 		{
 			Content = new StringContent("{\"error\": \"Invalid register\"}", Encoding.UTF8, "application/json")
 		}));
-		using var client = new SmartConnectClient(CreateConfiguration(handler, store));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler, store)));
 
 		var result = await client.ProcessTransactionAsync(CreateRequest());
 
@@ -154,7 +169,7 @@ public class SmartConnectClientTransactionTests
 		{
 			Content = new StringContent("{\"transactionId\": \"txn-1\", \"transactionStatus\": \"PENDING\"}", Encoding.UTF8, "application/json")
 		}));
-		using var client = new SmartConnectClient(CreateConfiguration(handler, store));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler, store)));
 
 		var result = await client.ProcessTransactionAsync(CreateRequest());
 
@@ -169,7 +184,7 @@ public class SmartConnectClientTransactionTests
 	[Fact]
 	public async Task Process_NullRequest_Throws()
 	{
-		using var client = new SmartConnectClient(CreateConfiguration(PendingResponseHandler()));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(PendingResponseHandler())));
 
 		await Assert.ThrowsAsync<ArgumentNullException>(() => client.ProcessTransactionAsync(null!));
 	}
@@ -182,7 +197,7 @@ public class SmartConnectClientTransactionTests
 	[InlineData("TransactionType")]
 	public async Task Process_MissingMandatoryField_Throws(string fieldName)
 	{
-		using var client = new SmartConnectClient(CreateConfiguration(PendingResponseHandler()));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(PendingResponseHandler())));
 
 		var request = CreateRequest();
 		switch (fieldName)
@@ -210,7 +225,7 @@ public class SmartConnectClientTransactionTests
 	[Fact]
 	public async Task Process_NonPositiveAmount_Throws()
 	{
-		using var client = new SmartConnectClient(CreateConfiguration(PendingResponseHandler()));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(PendingResponseHandler())));
 
 		var request = CreateRequest();
 		request.AmountTotal = Money.FromCents(0);
@@ -221,7 +236,7 @@ public class SmartConnectClientTransactionTests
 	[Fact]
 	public async Task Process_AfterDispose_Throws()
 	{
-		var client = new SmartConnectClient(CreateConfiguration(PendingResponseHandler()));
+		var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(PendingResponseHandler())));
 		client.Dispose();
 
 		await Assert.ThrowsAsync<ObjectDisposedException>(() => client.ProcessTransactionAsync(CreateRequest()));

@@ -146,7 +146,19 @@ public sealed class SmartConnectClient : IDisposable
 	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
 	/// <exception cref="ArgumentException">A mandatory field is blank, or the total amount is not positive.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
-	public async Task<SmartConnectTransactionResult> ProcessTransactionAsync(SmartConnectTransactionRequest request)
+	public Task<SmartConnectTransactionResult> ProcessTransactionAsync(SmartConnectTransactionRequest request)
+		=> ProcessTransactionAsync(request, null);
+
+	/// <summary>
+	/// Processes a transaction, reporting per-poll progress to <paramref name="progress"/> for UI feedback.
+	/// See <see cref="ProcessTransactionAsync(SmartConnectTransactionRequest)"/> for the full contract.
+	/// </summary>
+	/// <param name="request">The transaction to process.</param>
+	/// <param name="progress">An optional progress sink; reports carry no outcome responsibility.</param>
+	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
+	/// <exception cref="ArgumentException">A mandatory field is blank, or the total amount is not positive.</exception>
+	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
+	public async Task<SmartConnectTransactionResult> ProcessTransactionAsync(SmartConnectTransactionRequest request, IProgress<SmartConnectPollingStatus>? progress)
 	{
 		ValidateTransactionRequest(request);
 
@@ -249,19 +261,114 @@ public sealed class SmartConnectClient : IDisposable
 				SafeLog(LogLevel.Error, null, $"Failed to persist polling details ({ex.GetType().Name}) for '{request.ClientTransactionRef}' — continuing on the in-memory URL. Crash recovery for this transaction is degraded: manual verification may be needed if the POS terminates before completion.");
 			}
 
-			return await PollForResultAsync(initial.PollingUrl!, initial.TransactionId).ConfigureAwait(false);
+			return await PollForResultAsync(initial.PollingUrl!, initial.TransactionId, request.ClientTransactionRef, progress).ConfigureAwait(false);
 		}
 	}
 
-	// Task 8 replaces this stub with the real polling loop (interval, MaxPollDuration, 429 backoff,
-	// IProgress status, F8 PollingUrlInvalid classification).
-	private Task<SmartConnectTransactionResult> PollForResultAsync(string pollingUrl, string? transactionId)
+	/// <summary>The clock used for the poll deadline. Internal seam so tests run on virtual time.</summary>
+	internal Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.UtcNow;
+
+	/// <summary>The inter-poll delay. Internal seam so tests advance a fake clock instead of sleeping.</summary>
+	internal Func<TimeSpan, Task> PollDelay { get; set; } = interval => Task.Delay(interval);
+
+	private async Task<SmartConnectTransactionResult> PollForResultAsync(string pollingUrl, string? transactionId, string clientTransactionRef, IProgress<SmartConnectPollingStatus>? progress)
 	{
-		return Task.FromResult(new SmartConnectTransactionResult
+		var startedAt = Clock();
+		var deadline = startedAt + _config.MaxPollDuration;
+
+		while (true)
 		{
-			Status = SmartConnectTransactionStatus.Unknown,
-			TransactionId = transactionId
-		});
+			if (_disposed || Clock() >= deadline)
+			{
+				// Poll exhaustion/abandonment is the "live caller" Unknown: the caller gets the result and
+				// owns reconciliation, so the sentinel closes as Unknown (distinct from POST-phase
+				// TransportUnknown, where no response ever arrived).
+				SafeLog(LogLevel.Error, null, $"Polling ended without a terminal answer for '{clientTransactionRef}' after {(Clock() - startedAt).TotalSeconds:0}s ({(_disposed ? "client disposed" : "MaxPollDuration exceeded")}) — outcome UNKNOWN; reconcile before retrying.");
+				await CloseSentinelQuietlyAsync(clientTransactionRef, SmartConnectTransactionStatus.Unknown).ConfigureAwait(false);
+				return new SmartConnectTransactionResult
+				{
+					Status = SmartConnectTransactionStatus.Unknown,
+					TransactionId = transactionId
+				};
+			}
+
+			await PollDelay(_config.PollInterval).ConfigureAwait(false);
+
+			try
+			{
+				using (var pollRequest = new HttpRequestMessage(HttpMethod.Get, pollingUrl))
+				using (var response = await SendAsync(pollRequest).ConfigureAwait(false))
+				{
+					if (IsPollingUrlVerdict(response.StatusCode))
+					{
+						// (F8) An ANSWER saying the URL itself is no good — spinning NetworkError to
+						// timeout would waste MaxPollDuration and mislead the operator. The sentinel stays
+						// pending: the outcome is unresolved and Layer-2 recovery must investigate.
+						SafeLog(LogLevel.Error, null, $"SmartConnect answered the poll with HTTP {(int)response.StatusCode} for '{clientTransactionRef}' — the polling URL is invalid or expired. Outcome UNKNOWN; fall through to journal recovery.");
+						return new SmartConnectTransactionResult
+						{
+							Status = SmartConnectTransactionStatus.Unknown,
+							FailureCause = SmartConnectFailureCause.PollingUrlInvalid,
+							TransactionId = transactionId
+						};
+					}
+
+					if (!response.IsSuccessStatusCode)
+					{
+						// 429/5xx are transient — keep polling within MaxPollDuration. Task 9 adds
+						// Retry-After-aware backoff for 429.
+						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
+						continue;
+					}
+
+					var body = response.Content == null
+						? string.Empty
+						: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+					PollResult poll;
+					try
+					{
+						poll = TransactionResponseParser.ParsePollResponse(body);
+					}
+					catch (JsonException)
+					{
+						// A garbled poll body (proxy blip) is transient — the next poll re-asks.
+						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
+						continue;
+					}
+
+					if (poll.Progress == PollProgress.Completed)
+					{
+						var result = poll.Result!;
+						await CloseSentinelQuietlyAsync(clientTransactionRef, result.Status).ConfigureAwait(false);
+						return result;
+					}
+
+					progress?.Report(new SmartConnectPollingStatus
+					{
+						State = poll.Progress == PollProgress.Delayed
+							? SmartConnectPollingState.Delayed
+							: SmartConnectPollingState.Polling
+					});
+				}
+			}
+			catch (SmartConnectTransportException ex)
+			{
+				// (F11) Transient transport — report and retry; the PollDelay at the top of the loop still
+				// runs, so there is no tight retry-storm. NEVER treat "couldn't reach the server" as "URL
+				// expired" — a live transaction may still be fine.
+				SafeLog(LogLevel.Warning, ex, $"Network error during poll for '{clientTransactionRef}' — retrying on the next interval.");
+				progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError, Error = ex });
+			}
+		}
+	}
+
+	private static bool IsPollingUrlVerdict(HttpStatusCode statusCode)
+	{
+		return statusCode == HttpStatusCode.Unauthorized
+			|| statusCode == HttpStatusCode.Forbidden
+			|| statusCode == HttpStatusCode.NotFound
+			|| statusCode == HttpStatusCode.Gone;
 	}
 
 	private async Task<HttpResponseMessage> PostTransactionAsync(SmartConnectTransactionRequest request)
