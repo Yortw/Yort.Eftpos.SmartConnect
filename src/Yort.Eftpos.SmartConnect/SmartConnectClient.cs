@@ -265,6 +265,157 @@ public sealed class SmartConnectClient : IDisposable
 		}
 	}
 
+	/// <summary>
+	/// Resumes polling a persisted polling URL after a crash/restart (Layer-1 recovery). Jumps straight to
+	/// the poll loop: the sentinel already exists from before the crash, so neither
+	/// <c>SaveTransactionAttemptAsync</c> nor <c>UpdatePollingDetailsAsync</c> is called;
+	/// <c>UpdateCompletedAsync</c> IS called when a terminal state is reached. Never throws for runtime
+	/// conditions — an expired URL surfaces as <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>
+	/// (fall through to <see cref="GetLastTransactionResultAsync(SmartConnectRecoveryRequest)"/>).
+	/// </summary>
+	/// <param name="pollingUrl">The persisted polling URL (carries the access token — handle accordingly).</param>
+	/// <param name="clientTransactionRef">The reference the transaction's state is persisted under.</param>
+	/// <exception cref="ArgumentNullException"><paramref name="pollingUrl"/> or <paramref name="clientTransactionRef"/> is null.</exception>
+	/// <exception cref="ArgumentException"><paramref name="pollingUrl"/> or <paramref name="clientTransactionRef"/> is empty/whitespace.</exception>
+	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
+	public Task<SmartConnectTransactionResult> ResumePollingAsync(string pollingUrl, string clientTransactionRef)
+		=> ResumePollingAsync(pollingUrl, clientTransactionRef, null);
+
+	/// <summary>
+	/// Resumes polling a persisted polling URL after a crash/restart, reporting per-poll progress. See
+	/// <see cref="ResumePollingAsync(string, string)"/> for the full contract.
+	/// </summary>
+	/// <param name="pollingUrl">The persisted polling URL.</param>
+	/// <param name="clientTransactionRef">The reference the transaction's state is persisted under.</param>
+	/// <param name="progress">An optional progress sink.</param>
+	/// <exception cref="ArgumentNullException"><paramref name="pollingUrl"/> or <paramref name="clientTransactionRef"/> is null.</exception>
+	/// <exception cref="ArgumentException"><paramref name="pollingUrl"/> or <paramref name="clientTransactionRef"/> is empty/whitespace.</exception>
+	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
+	public Task<SmartConnectTransactionResult> ResumePollingAsync(string pollingUrl, string clientTransactionRef, IProgress<SmartConnectPollingStatus>? progress)
+	{
+		if (pollingUrl == null)
+		{
+			throw new ArgumentNullException(nameof(pollingUrl));
+		}
+
+		if (string.IsNullOrWhiteSpace(pollingUrl))
+		{
+			throw new ArgumentException("A polling URL is required.", nameof(pollingUrl));
+		}
+
+		if (clientTransactionRef == null)
+		{
+			throw new ArgumentNullException(nameof(clientTransactionRef));
+		}
+
+		if (string.IsNullOrWhiteSpace(clientTransactionRef))
+		{
+			throw new ArgumentException("A client transaction reference is required.", nameof(clientTransactionRef));
+		}
+
+		ThrowIfDisposed();
+
+		return PollForResultAsync(pollingUrl, null, clientTransactionRef, progress);
+	}
+
+	/// <summary>
+	/// Queries the result of the register's last transaction via the deprecated <c>Journal.GetTransResult</c>
+	/// (Layer-2 recovery, used when no usable polling URL exists). Makes NO state-store calls — the caller
+	/// owns the existing sentinel and updates it after interpreting the result. The POST phase throws the
+	/// typed transport exception (this is a non-financial, idempotent query — safe to retry the whole call
+	/// regardless of <see cref="SmartConnectTransportException.Delivery"/>); the poll phase is result-based
+	/// like all polling.
+	/// </summary>
+	/// <param name="request">The registration triple, matching pairing and the original transaction.</param>
+	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
+	/// <exception cref="ArgumentException">A mandatory field of <paramref name="request"/> is blank.</exception>
+	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
+	/// <exception cref="SmartConnectTransportException">The journal POST could not be completed.</exception>
+	public Task<SmartConnectTransactionResult> GetLastTransactionResultAsync(SmartConnectRecoveryRequest request)
+		=> GetLastTransactionResultAsync(request, null);
+
+	/// <summary>
+	/// Queries the result of the register's last transaction, reporting per-poll progress. See
+	/// <see cref="GetLastTransactionResultAsync(SmartConnectRecoveryRequest)"/> for the full contract.
+	/// </summary>
+	/// <param name="request">The registration triple, matching pairing and the original transaction.</param>
+	/// <param name="progress">An optional progress sink.</param>
+	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
+	/// <exception cref="ArgumentException">A mandatory field of <paramref name="request"/> is blank.</exception>
+	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
+	/// <exception cref="SmartConnectTransportException">The journal POST could not be completed.</exception>
+	public async Task<SmartConnectTransactionResult> GetLastTransactionResultAsync(SmartConnectRecoveryRequest request, IProgress<SmartConnectPollingStatus>? progress)
+	{
+		if (request == null)
+		{
+			throw new ArgumentNullException(nameof(request));
+		}
+
+		RequireField(request.POSRegisterID, nameof(request.POSRegisterID));
+		RequireField(request.POSBusinessName, nameof(request.POSBusinessName));
+		RequireField(request.POSVendorName, nameof(request.POSVendorName));
+		ThrowIfDisposed();
+
+		var fields = new List<KeyValuePair<string, string?>>(5)
+		{
+			new KeyValuePair<string, string?>("POSRegisterID", request.POSRegisterID),
+			new KeyValuePair<string, string?>("POSBusinessName", request.POSBusinessName),
+			new KeyValuePair<string, string?>("POSVendorName", request.POSVendorName),
+			new KeyValuePair<string, string?>("TransactionMode", "ASYNC"),
+			new KeyValuePair<string, string?>("TransactionType", SmartConnectTransactionType.JournalGetTransResult)
+		};
+
+		// (R5) No transport catch here — the typed exception propagates by design.
+		HttpResponseMessage response;
+		using (var httpRequest = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/Transaction"))
+		{
+			httpRequest.Content = new StringContent(FormUrlEncoder.Encode(fields), Encoding.UTF8, "application/x-www-form-urlencoded");
+			response = await SendAsync(httpRequest).ConfigureAwait(false);
+		}
+
+		using (response)
+		{
+			var body = response.Content == null
+				? string.Empty
+				: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+			if (!response.IsSuccessStatusCode)
+			{
+				SafeLog(LogLevel.Error, null, $"SmartConnect rejected the Journal.GetTransResult query: {GetErrorMessage(response, body)}");
+				return new SmartConnectTransactionResult
+				{
+					Status = SmartConnectTransactionStatus.Failed,
+					FailureCause = SmartConnectFailureCause.ServiceError
+				};
+			}
+
+			InitialTransactionResponse initial;
+			try
+			{
+				initial = TransactionResponseParser.ParseInitialResponse(body);
+			}
+			catch (JsonException)
+			{
+				initial = new InitialTransactionResponse();
+			}
+
+			if (string.IsNullOrEmpty(initial.PollingUrl))
+			{
+				SafeLog(LogLevel.Error, null, "SmartConnect accepted the Journal.GetTransResult query but returned no polling URL — the journal result cannot be retrieved.");
+				return new SmartConnectTransactionResult
+				{
+					Status = SmartConnectTransactionStatus.Unknown,
+					FailureCause = SmartConnectFailureCause.TransportUnknown,
+					TransactionId = initial.TransactionId
+				};
+			}
+
+			// Null ref = no state-store interaction at any point, including terminal (the driver owns the
+			// original transaction's sentinel and interprets/updates it itself).
+			return await PollForResultAsync(initial.PollingUrl!, initial.TransactionId, null, progress).ConfigureAwait(false);
+		}
+	}
+
 	/// <summary>The HttpClient in use (owned or injected). Internal seam so tests can observe disposal.</summary>
 	internal HttpClient HttpClientInternal => _httpClient;
 
@@ -274,7 +425,9 @@ public sealed class SmartConnectClient : IDisposable
 	/// <summary>The inter-poll delay. Internal seam so tests advance a fake clock instead of sleeping.</summary>
 	internal Func<TimeSpan, Task> PollDelay { get; set; } = interval => Task.Delay(interval);
 
-	private async Task<SmartConnectTransactionResult> PollForResultAsync(string pollingUrl, string? transactionId, string clientTransactionRef, IProgress<SmartConnectPollingStatus>? progress)
+	// A null clientTransactionRef means "no state-store interaction at all" — the Layer-2 journal-query
+	// mode, where the driver owns the original transaction's sentinel.
+	private async Task<SmartConnectTransactionResult> PollForResultAsync(string pollingUrl, string? transactionId, string? clientTransactionRef, IProgress<SmartConnectPollingStatus>? progress)
 	{
 		var startedAt = Clock();
 		var deadline = startedAt + _config.MaxPollDuration;
@@ -292,8 +445,12 @@ public sealed class SmartConnectClient : IDisposable
 				// Poll exhaustion/abandonment is the "live caller" Unknown: the caller gets the result and
 				// owns reconciliation, so the sentinel closes as Unknown (distinct from POST-phase
 				// TransportUnknown, where no response ever arrived).
-				SafeLog(LogLevel.Error, null, $"Polling ended without a terminal answer for '{clientTransactionRef}' after {(Clock() - startedAt).TotalSeconds:0}s ({(_disposed ? "client disposed" : "MaxPollDuration exceeded")}) — outcome UNKNOWN; reconcile before retrying.");
-				await CloseSentinelQuietlyAsync(clientTransactionRef, SmartConnectTransactionStatus.Unknown).ConfigureAwait(false);
+				SafeLog(LogLevel.Error, null, $"Polling ended without a terminal answer for '{clientTransactionRef ?? "(journal query)"}' after {(Clock() - startedAt).TotalSeconds:0}s ({(_disposed ? "client disposed" : "MaxPollDuration exceeded")}) — outcome UNKNOWN; reconcile before retrying.");
+				if (clientTransactionRef != null)
+				{
+					await CloseSentinelQuietlyAsync(clientTransactionRef, SmartConnectTransactionStatus.Unknown).ConfigureAwait(false);
+				}
+
 				return new SmartConnectTransactionResult
 				{
 					Status = SmartConnectTransactionStatus.Unknown,
@@ -361,7 +518,11 @@ public sealed class SmartConnectClient : IDisposable
 					if (poll.Progress == PollProgress.Completed)
 					{
 						var result = poll.Result!;
-						await CloseSentinelQuietlyAsync(clientTransactionRef, result.Status).ConfigureAwait(false);
+						if (clientTransactionRef != null)
+						{
+							await CloseSentinelQuietlyAsync(clientTransactionRef, result.Status).ConfigureAwait(false);
+						}
+
 						return result;
 					}
 
