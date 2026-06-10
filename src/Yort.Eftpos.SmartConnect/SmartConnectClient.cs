@@ -265,6 +265,9 @@ public sealed class SmartConnectClient : IDisposable
 		}
 	}
 
+	/// <summary>The HttpClient in use (owned or injected). Internal seam so tests can observe disposal.</summary>
+	internal HttpClient HttpClientInternal => _httpClient;
+
 	/// <summary>The clock used for the poll deadline. Internal seam so tests run on virtual time.</summary>
 	internal Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.UtcNow;
 
