@@ -150,9 +150,9 @@ internal static class Program
 			}
 
 			amountCash = cash.Value;
-			Console.WriteLine("F9 NOTE: whether AmountTotal should INCLUDE the cash-out portion is the open question this");
-			Console.WriteLine("probe answers — the values below are sent exactly as typed; compare them with the completed");
-			Console.WriteLine("response's amount fields and what the terminal charged.");
+			Console.WriteLine("F9 NOTE: the docs say AmountTotal INCLUDES the cash-out portion (\"cash portion of the");
+			Console.WriteLine("AmountTotal\") — this probe CONFIRMS docs-vs-reality: values are sent exactly as typed;");
+			Console.WriteLine("compare the completed response's amount fields and what the terminal actually charged.");
 		}
 
 		// (H8) Echo in unambiguous units and confirm — this is a REAL transaction on the connected pinpad.

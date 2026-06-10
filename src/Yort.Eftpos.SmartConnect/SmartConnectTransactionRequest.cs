@@ -11,16 +11,18 @@ public sealed class SmartConnectTransactionRequest
 	public string TransactionType { get; set; } = SmartConnectTransactionType.CardPurchase;
 
 	/// <summary>
-	/// The total amount. <b>UNVERIFIED:</b> for <c>Card.PurchasePlusCash</c>, whether this includes the
-	/// <see cref="AmountCash"/> portion or is purchase-only is not yet established — do not assume either
-	/// interpretation until it is confirmed against the dev environment (verification item F9; amount
-	/// arithmetic errors cause real financial harm).
+	/// The total amount. Always positive — including for refunds ("a non-zero positive number, regardless
+	/// of the fact that this is a refund", per the official docs). For <c>Card.PurchasePlusCash</c> the
+	/// docs state this INCLUDES the <see cref="AmountCash"/> portion ("the total amount of the transaction,
+	/// including the cash-out amount") — documented 2026-06-10; dev-terminal confirmation is still a
+	/// pre-release verification item (F9) because amount arithmetic errors cause real financial harm.
 	/// </summary>
 	public Money AmountTotal { get; set; }
 
 	/// <summary>
 	/// The cash-out amount; sent only when <see cref="TransactionType"/> is <c>Card.PurchasePlusCash</c>.
-	/// See the <see cref="AmountTotal"/> caveat about the unverified relationship between the two amounts.
+	/// Per the official docs it is the "cash portion of the AmountTotal" — i.e. a component of
+	/// <see cref="AmountTotal"/>, not an addition to it. See the F9 note on <see cref="AmountTotal"/>.
 	/// </summary>
 	public Money AmountCash { get; set; }
 
