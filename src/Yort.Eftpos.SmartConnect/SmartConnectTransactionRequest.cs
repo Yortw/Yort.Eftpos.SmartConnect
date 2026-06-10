@@ -29,10 +29,10 @@ public sealed class SmartConnectTransactionRequest
 	/// <summary>The globally-unique register id (UUID format).</summary>
 	public string POSRegisterID { get; set; } = string.Empty;
 
-	/// <summary>The merchant/business name. Must match the value used at pairing.</summary>
+	/// <summary>The merchant/business name — the RETAILER/STORE (docs: "Store Name"). Must match the value used at pairing.</summary>
 	public string POSBusinessName { get; set; } = string.Empty;
 
-	/// <summary>The POS vendor name. Must match the value used at pairing.</summary>
+	/// <summary>The POS software vendor name (docs: "POS Software Vendor") — the system provider, never the retailer. Must match the value used at pairing.</summary>
 	public string POSVendorName { get; set; } = string.Empty;
 
 	/// <summary>

@@ -506,8 +506,8 @@ internal static class Program
 
 		_settings.BaseUrl = PromptWithDefault("Base URL", _settings.BaseUrl ?? SmartConnectEnvironments.Development.AbsoluteUri);
 		_settings.StateDirectory = PromptWithDefault("State directory", _settings.StateDirectory ?? Path.Combine(settingsDirectory, "state"));
-		_settings.BusinessName = PromptWithDefault("Business name (must match across pairing + transactions)", _settings.BusinessName ?? "Demo Business");
-		_settings.VendorName = PromptWithDefault("Vendor name", _settings.VendorName ?? "YortSmartConnectDemo");
+		_settings.BusinessName = PromptWithDefault("Business name = the RETAILER/STORE, e.g. Acme Stores (docs: 'Store Name'; must match across pairing + transactions)", _settings.BusinessName ?? "Demo Business");
+		_settings.VendorName = PromptWithDefault("Vendor name = the POS SOFTWARE PROVIDER, e.g. MyPosCo (docs: 'POS Software Vendor'; must match too)", _settings.VendorName ?? "YortSmartConnectDemo");
 		_settings.RegisterName = PromptWithDefault("Register name", _settings.RegisterName ?? "Demo Register 1");
 		_settings.MaxPollMinutes = int.TryParse(PromptWithDefault("Max poll duration (minutes; generous for manual card handling)", _settings.MaxPollMinutes.ToString()), out var minutes) && minutes > 0 ? minutes : 10;
 

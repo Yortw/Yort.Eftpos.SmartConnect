@@ -10,9 +10,9 @@ public sealed class SmartConnectRegistration
 	/// <summary>The globally-unique register id (UUID format), as used at pairing.</summary>
 	public string POSRegisterID { get; set; } = string.Empty;
 
-	/// <summary>The merchant/business name, as used at pairing.</summary>
+	/// <summary>The merchant/business name, as used at pairing — the RETAILER/STORE (docs: "Store Name"), never the POS provider.</summary>
 	public string POSBusinessName { get; set; } = string.Empty;
 
-	/// <summary>The POS vendor name, as used at pairing.</summary>
+	/// <summary>The POS software vendor name, as used at pairing (docs: "POS Software Vendor") — the system provider, never the retailer.</summary>
 	public string POSVendorName { get; set; } = string.Empty;
 }

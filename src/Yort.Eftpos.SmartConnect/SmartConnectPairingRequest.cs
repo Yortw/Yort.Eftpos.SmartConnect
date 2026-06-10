@@ -13,9 +13,9 @@ public sealed class SmartConnectPairingRequest
 	/// <summary>A human-readable name for this register.</summary>
 	public string? POSRegisterName { get; set; }
 
-	/// <summary>The merchant/business name. Must match on every subsequent transaction.</summary>
+	/// <summary>The merchant/business name — the RETAILER/STORE (the official docs call it "Store Name"), e.g. the trading name of the shop, never the POS provider. Must match on every subsequent transaction.</summary>
 	public string POSBusinessName { get; set; } = string.Empty;
 
-	/// <summary>The POS vendor name. Must match on every subsequent transaction.</summary>
+	/// <summary>The POS software vendor name (the official docs' "POS Software Vendor") — the system provider, never the retailer. Must match on every subsequent transaction.</summary>
 	public string POSVendorName { get; set; } = string.Empty;
 }
