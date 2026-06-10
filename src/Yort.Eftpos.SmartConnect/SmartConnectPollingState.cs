@@ -9,7 +9,12 @@ public enum SmartConnectPollingState
 	/// <summary>A normal poll — the terminal is working through the transaction.</summary>
 	Polling = 0,
 
-	/// <summary>The cloud reported the transaction as delayed; the terminal may be temporarily offline.</summary>
+	/// <summary>
+	/// The cloud reported the transaction as delayed; the terminal may be temporarily offline. The library
+	/// keeps polling (within <see cref="SmartConnectClientConfiguration.MaxPollDuration"/>) — the client app
+	/// should update the operator prompt (e.g. "Waiting for pinpad — device may be offline"), not abort:
+	/// the transaction may still complete normally when the terminal reconnects.
+	/// </summary>
 	Delayed,
 
 	/// <summary>The poll was rate-limited (HTTP 429); the client is waiting before retrying.</summary>

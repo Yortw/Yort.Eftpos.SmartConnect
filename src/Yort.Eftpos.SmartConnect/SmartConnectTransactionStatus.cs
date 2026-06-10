@@ -22,7 +22,12 @@ public enum SmartConnectTransactionStatus
 	/// <summary>The transaction was approved by the terminal/issuer.</summary>
 	Accepted,
 
-	/// <summary>The transaction was declined by the terminal/issuer (a normal, final outcome — not an error).</summary>
+	/// <summary>
+	/// The transaction was declined by the terminal/issuer (a normal, final outcome — not an error).
+	/// Typical EFTPOS decline reasons include insufficient funds, an incorrect PIN, an invalid/unsupported
+	/// account type, or an expired card (illustrative examples — the specific reasons SmartConnect surfaces
+	/// are whatever the issuer/terminal reports, via the receipt text and raw response data).
+	/// </summary>
 	Declined,
 
 	/// <summary>The customer or operator cancelled the transaction at the terminal.</summary>

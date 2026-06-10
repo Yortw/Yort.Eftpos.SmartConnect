@@ -10,10 +10,18 @@ public sealed class SmartConnectTransactionRequest
 	/// <summary>The SmartConnect transaction type. See <see cref="SmartConnectTransactionType"/>.</summary>
 	public string TransactionType { get; set; } = SmartConnectTransactionType.CardPurchase;
 
-	/// <summary>The total amount.</summary>
+	/// <summary>
+	/// The total amount. <b>UNVERIFIED:</b> for <c>Card.PurchasePlusCash</c>, whether this includes the
+	/// <see cref="AmountCash"/> portion or is purchase-only is not yet established — do not assume either
+	/// interpretation until it is confirmed against the dev environment (verification item F9; amount
+	/// arithmetic errors cause real financial harm).
+	/// </summary>
 	public Money AmountTotal { get; set; }
 
-	/// <summary>The cash-out amount, for purchase-plus-cash.</summary>
+	/// <summary>
+	/// The cash-out amount; sent only when <see cref="TransactionType"/> is <c>Card.PurchasePlusCash</c>.
+	/// See the <see cref="AmountTotal"/> caveat about the unverified relationship between the two amounts.
+	/// </summary>
 	public Money AmountCash { get; set; }
 
 	/// <summary>The globally-unique register id (UUID format).</summary>
