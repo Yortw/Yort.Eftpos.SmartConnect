@@ -1,14 +1,11 @@
 namespace Yort.Eftpos.SmartConnect;
 
 /// <summary>
-/// The registration details for a Layer-2 recovery query (<c>Journal.GetTransResult</c>). The triple must
-/// match the values used at pairing and on the original transaction.
+/// The register's identity triple, as established at pairing — used by every non-financial operation
+/// (terminal status, logon, settlement, the Layer-2 recovery query, and the unknown-type escape hatch).
+/// The values must match those used at pairing and on financial transactions.
 /// </summary>
-/// <remarks>
-/// <c>Journal.GetTransResult</c> is deprecated by the vendor and undocumented for async mode (design Known
-/// Limitation #4) — its behaviour must be confirmed against the dev environment before relying on it.
-/// </remarks>
-public sealed class SmartConnectRecoveryRequest
+public sealed class SmartConnectRegistration
 {
 	/// <summary>The globally-unique register id (UUID format), as used at pairing.</summary>
 	public string POSRegisterID { get; set; } = string.Empty;

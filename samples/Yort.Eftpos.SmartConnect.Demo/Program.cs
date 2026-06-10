@@ -78,6 +78,9 @@ internal static class Program
 			Console.WriteLine(" 7) Journal.GetTransResult probe — with POSReferenceID (Decision 10)");
 			Console.WriteLine(" 8) Re-pair with same register id (idempotency probe)");
 			Console.WriteLine(" 9) Transport-shape probe (no pinpad needed; run on BOTH TFMs — R4)");
+			Console.WriteLine("10) Terminal status (is the cloud able to reach the pinpad?)");
+			Console.WriteLine("11) Settlement inquiry (read-only)");
+			Console.WriteLine("12) Settlement CUTOVER (state-changing!)");
 			Console.WriteLine(" 0) Quit");
 			Console.Write("> ");
 
@@ -95,6 +98,9 @@ internal static class Program
 					case "7": await JournalProbeAsync(includePosReferenceId: true).ConfigureAwait(false); break;
 					case "8": await PairAsync(client).ConfigureAwait(false); break;
 					case "9": await TransportShapeProbeAsync().ConfigureAwait(false); break;
+					case "10": RenderNonFinancial("Terminal.GetStatus", await client.GetTerminalStatusAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
+					case "11": RenderNonFinancial("Acquirer.Settlement.Inquiry", await client.SettlementInquiryAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
+					case "12": await CutoverAsync(client).ConfigureAwait(false); break;
 					case "0": return;
 				}
 			}
@@ -318,6 +324,19 @@ internal static class Program
 			Console.WriteLine("-----------------------------");
 		}
 
+		if (result.Status != SmartConnectTransactionStatus.Accepted && result.Status != SmartConnectTransactionStatus.Declined)
+		{
+			// Abnormal outcome — the raw fields are the diagnosis (e.g. DeviceOffline = CANCELLED/FAILED-INTERFACE:
+			// the terminal must be at its idle screen BEFORE the POS sends; safe to retry once it is).
+			RenderRawData(result);
+		}
+
+		if (result.Status == SmartConnectTransactionStatus.DeviceOffline)
+		{
+			Console.WriteLine("DEVICE OFFLINE: the cloud could not reach the pinpad. Check it is at its idle SmartConnect");
+			Console.WriteLine("screen (not in a menu) and retry — no money moved; immediate retry is safe.");
+		}
+
 		if (result.Status == SmartConnectTransactionStatus.Unknown)
 		{
 			Console.WriteLine("OUTCOME UNKNOWN — the customer may or may not have been charged.");
@@ -325,6 +344,87 @@ internal static class Program
 		}
 
 		Transcript($"RESULT ref={clientTransactionRef} status={result.Status} cause={result.FailureCause} txnId={result.TransactionId} auth={result.AuthId} total={result.AmountTotal.ToCents()}c surcharge={result.AmountSurcharge.ToCents()}c tip={result.AmountTip.ToCents()}c");
+	}
+
+	private static SmartConnectRegistration Registration()
+	{
+		return new SmartConnectRegistration
+		{
+			POSRegisterID = _settings.RegisterId!,
+			POSBusinessName = _settings.BusinessName!,
+			POSVendorName = _settings.VendorName!
+		};
+	}
+
+	private static async Task CutoverAsync(SmartConnectClient client)
+	{
+		// (J1) Cutover closes the acquirer settlement window — state-changing, NOT a read-only query.
+		Console.Write("Settlement CUTOVER is a state-changing acquirer operation. Proceed? (y/N): ");
+		if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+		{
+			Console.WriteLine("Cancelled.");
+			return;
+		}
+
+		var result = await client.SettlementCutoverAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false);
+		RenderNonFinancial("Acquirer.Settlement.Cutover", result);
+
+		if (result.Status == SmartConnectTransactionStatus.Unknown)
+		{
+			Console.WriteLine("CUTOVER OUTCOME UNKNOWN — it MAY have executed. Run Settlement inquiry (menu 11) to");
+			Console.WriteLine("verify before re-issuing; a repeated cutover double-cuts the settlement window.");
+		}
+	}
+
+	// (J3) Non-financial response shapes are UNVERIFIED — the mapped Status is provisional, so the raw
+	// fields are rendered verbatim; these feed the H9 verdict list.
+	private static void RenderNonFinancial(string operation, SmartConnectTransactionResult result)
+	{
+		Console.WriteLine();
+		Console.WriteLine($"{operation}: mapped Status = {result.Status} (PROVISIONAL mapping)   FailureCause: {result.FailureCause}");
+		Console.WriteLine($"TransactionId: {result.TransactionId}");
+		RenderRawData(result);
+
+		if (!string.IsNullOrEmpty(result.Receipt))
+		{
+			Console.WriteLine("--- receipt ---");
+			Console.WriteLine(result.Receipt);
+			Console.WriteLine("---------------");
+		}
+
+		Transcript($"NONFIN {operation} status={result.Status} cause={result.FailureCause} txnId={result.TransactionId} raw={RedactUrl(RawDataLine(result))}");
+		Console.WriteLine("Record the response-shape verdict (raw fields above) in the ADR open-questions table.");
+	}
+
+	private static void RenderRawData(SmartConnectTransactionResult result)
+	{
+		if (result.RawData == null || result.RawData.Count == 0)
+		{
+			Console.WriteLine("(no raw response data)");
+			return;
+		}
+
+		Console.WriteLine("raw response fields:");
+		foreach (var pair in result.RawData)
+		{
+			Console.WriteLine($"  {pair.Key} = {RedactUrl(pair.Value)}");
+		}
+	}
+
+	private static string RawDataLine(SmartConnectTransactionResult result)
+	{
+		if (result.RawData == null)
+		{
+			return "(none)";
+		}
+
+		var parts = new List<string>();
+		foreach (var pair in result.RawData)
+		{
+			parts.Add(pair.Key + "=" + pair.Value);
+		}
+
+		return string.Join("; ", parts);
 	}
 
 	private static Money? PromptAmount(string prompt)

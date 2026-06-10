@@ -71,9 +71,9 @@ public class SmartConnectClientResumeTests
 		return store;
 	}
 
-	private static SmartConnectRecoveryRequest CreateRecoveryRequest()
+	private static SmartConnectRegistration CreateRegistration()
 	{
-		return new SmartConnectRecoveryRequest
+		return new SmartConnectRegistration
 		{
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSBusinessName = "Demo Business",
@@ -211,7 +211,7 @@ public class SmartConnectClientResumeTests
 				: Json(HttpStatusCode.OK, AcceptedPollJson)));
 		using var client = CreateClient(handler, new InMemoryTransactionStateStore());
 
-		await client.GetLastTransactionResultAsync(CreateRecoveryRequest());
+		await client.GetLastTransactionResultAsync(CreateRegistration());
 
 		Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
 		Assert.Equal("https://unit.test/POS/Transaction", handler.Requests[0].Uri?.AbsoluteUri);
@@ -238,7 +238,7 @@ public class SmartConnectClientResumeTests
 				: Json(HttpStatusCode.OK, AcceptedPollJson)));
 		using var client = CreateClient(handler, store);
 
-		var result = await client.GetLastTransactionResultAsync(CreateRecoveryRequest());
+		var result = await client.GetLastTransactionResultAsync(CreateRegistration());
 
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		Assert.Empty(store.CallLog);
@@ -254,7 +254,7 @@ public class SmartConnectClientResumeTests
 				: Json(HttpStatusCode.OK, PendingPollJson)));
 		using var client = CreateClient(handler, store);
 
-		var result = await client.GetLastTransactionResultAsync(CreateRecoveryRequest());
+		var result = await client.GetLastTransactionResultAsync(CreateRegistration());
 
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
 		Assert.Empty(store.CallLog);
@@ -268,7 +268,7 @@ public class SmartConnectClientResumeTests
 		var handler = new MockHttpHandler(_ => throw new HttpRequestException("refused", new SocketException((int)SocketError.ConnectionRefused)));
 		using var client = CreateClient(handler, new InMemoryTransactionStateStore());
 
-		var thrown = await Assert.ThrowsAsync<SmartConnectTransportException>(() => client.GetLastTransactionResultAsync(CreateRecoveryRequest()));
+		var thrown = await Assert.ThrowsAsync<SmartConnectTransportException>(() => client.GetLastTransactionResultAsync(CreateRegistration()));
 
 		Assert.Equal(SmartConnectRequestDelivery.NotSent, thrown.Delivery);
 	}
@@ -291,7 +291,7 @@ public class SmartConnectClientResumeTests
 		});
 		using var client = CreateClient(handler, new InMemoryTransactionStateStore());
 
-		var result = await client.GetLastTransactionResultAsync(CreateRecoveryRequest());
+		var result = await client.GetLastTransactionResultAsync(CreateRegistration());
 
 		Assert.Equal(1, posted);
 		Assert.Equal(SmartConnectFailureCause.PollingUrlInvalid, result.FailureCause);
@@ -303,7 +303,7 @@ public class SmartConnectClientResumeTests
 		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.BadRequest, "{\"error\": \"unsupported\"}")));
 		using var client = CreateClient(handler, new InMemoryTransactionStateStore());
 
-		var result = await client.GetLastTransactionResultAsync(CreateRecoveryRequest());
+		var result = await client.GetLastTransactionResultAsync(CreateRegistration());
 
 		Assert.Equal(SmartConnectTransactionStatus.Failed, result.Status);
 		Assert.Equal(SmartConnectFailureCause.ServiceError, result.FailureCause);
@@ -316,7 +316,7 @@ public class SmartConnectClientResumeTests
 
 		await Assert.ThrowsAsync<ArgumentNullException>(() => client.GetLastTransactionResultAsync(null!));
 
-		var request = CreateRecoveryRequest();
+		var request = CreateRegistration();
 		request.POSRegisterID = string.Empty;
 		await Assert.ThrowsAsync<ArgumentException>(() => client.GetLastTransactionResultAsync(request));
 	}

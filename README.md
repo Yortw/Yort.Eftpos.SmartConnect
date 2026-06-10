@@ -101,7 +101,7 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 		// Layer 2 (best effort): query the register's last transaction and match it to the sentinel
 		// yourself. Journal.GetTransResult is vendor-deprecated and undocumented for async mode —
 		// verify it against the dev environment before relying on it.
-		var last = await client.GetLastTransactionResultAsync(new SmartConnectRecoveryRequest
+		var last = await client.GetLastTransactionResultAsync(new SmartConnectRegistration
 		{
 			POSRegisterID = registerId,
 			POSBusinessName = "My Store",

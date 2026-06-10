@@ -50,4 +50,30 @@ public static class SmartConnectTransactionType
 
 	/// <summary>Query terminal status.</summary>
 	public const string TerminalGetStatus = "Terminal.GetStatus";
+
+	// (J2) The ONE list of financial type names, adjacent to the constants so the two cannot drift. Used by
+	// ExecuteNonFinancialAsync's bypass guard; ProcessTransactionAsync is the financial path for these.
+	private static readonly string[] KnownFinancialTypes =
+	{
+		CardPurchase, CardRefund, CardPurchasePlusCash, CardCashAdvance, CardAuthorise, CardFinalise,
+		QrMerchantPurchase, QrConsumerPurchase, QrRefund
+	};
+
+	/// <summary>
+	/// Returns whether <paramref name="transactionType"/> is one of the financial (money-moving) types this
+	/// library knows. Financial types must go through <c>ProcessTransactionAsync</c> — the crash-recovery
+	/// sentinel is mandatory for money — and are rejected by <c>ExecuteNonFinancialAsync</c>.
+	/// </summary>
+	public static bool IsKnownFinancial(string transactionType)
+	{
+		foreach (var financialType in KnownFinancialTypes)
+		{
+			if (string.Equals(financialType, transactionType, System.StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
 }
