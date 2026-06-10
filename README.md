@@ -2,21 +2,122 @@
 
 A .NET client library for the **SmartPay / Shift4 SmartConnect** EFTPOS integration (New Zealand) — a cloud REST API that pairs a point-of-sale register to a payment terminal and processes card transactions via an asynchronous polling model.
 
-> ⚠️ **Work in progress.** This library is under active initial development and is not yet released.
+> ⚠️ **Work in progress.** This library is under active initial development and is not yet released or published to NuGet. Until then, build from source.
 >
-> **Unofficial:** this is an independent, unofficial client library and is not affiliated with, endorsed by, or supported by Shift4 / SmartPay. "SmartConnect", "SmartPay", and "Shift4" are trademarks of their respective owners.
+> **Unofficial:** this is an independent, unofficial client library and is not affiliated with, endorsed by, or supported by Shift4 / SmartPay. "SmartConnect", "SmartPay", and "Shift4" are trademarks of their respective owners. The official API documentation is at <https://smartconnectdev.shift4.co.nz>.
 
 ## What it is
 
 - Targets **.NET Standard 2.0** (consumable by .NET Framework 4.6.1+ through modern .NET).
-- Wraps the two SmartConnect endpoints (`PUT /Pairing/{code}` and `POST /Transaction` + GET-poll) behind a small, testable client.
+- Wraps the SmartConnect endpoints (`PUT /Pairing/{code}`, `POST /Transaction` + GET-poll) behind a small, testable client with built-in poll-interval handling, HTTP 429 backoff (`Retry-After` honoured), and per-poll progress reporting.
 - Treats declines/cancellations as **data** (a result status), and reserves exceptions for failures to obtain an answer.
-- Makes crash-recovery a first-class concern: the caller persists the transaction state (including the polling URL) via an injected contract, and can resume polling after a restart.
+- Makes crash-recovery a first-class concern: the caller persists transaction state (including the polling URL) via an injected contract, the library refuses to send a transaction it could not first record, and polling can be resumed after a restart.
 
-## Status
+## The contract in one paragraph
 
-See the design and implementation plan (in the consuming product's repository) for the current scope, known vendor limitations, and roadmap.
+If SmartConnect **answered**, you get a `SmartConnectTransactionResult` — including declines (`Declined` is a normal outcome, not an error) and including `Unknown` (which you **must** handle explicitly: it means the financial outcome is ambiguous and needs reconciliation; it is never safe to treat as approved *or* as not-charged). If the library **could not get an answer**, methods that are one-shot (`PairAsync`, `GetLastTransactionResultAsync`) throw a single exception type, `SmartConnectTransportException`, whose `Delivery` property tells you what is known: `NotSent` (provably never reached the service — retry freely) or `Unknown` (may have been processed — do not blind-retry a payment). `ProcessTransactionAsync` never throws for runtime conditions at all — every operational failure is a result; inspect `Status` plus `FailureCause`.
+
+## Quick start
+
+### 1. Pair the register (once)
+
+```csharp
+var configuration = new SmartConnectClientConfiguration
+{
+	BaseUrl = SmartConnectEnvironments.Development, // switch to .Production for release builds
+	StateStore = new FileBasedTransactionStateStore(@"C:\ProgramData\MyPos\EftposState"),
+	UserAgentProductName = "MyPos",
+	UserAgentProductVersion = "1.0.0"
+};
+
+using var client = new SmartConnectClient(configuration);
+
+var pairing = await client.PairAsync("12345678", new SmartConnectPairingRequest
+{
+	// Deterministic UUID v5: same merchant + register always produces the same id, so a
+	// reinstalled register keeps its existing pairing.
+	POSRegisterID = SmartConnectRegisterId.Generate("MyMerchant", "Register-01").ToString(),
+	POSBusinessName = "My Store",
+	POSVendorName = "MyPos",
+	POSRegisterName = "Front Counter"
+});
+
+if (!pairing.Success)
+{
+	Console.WriteLine($"Pairing failed: {pairing.ErrorMessage}");
+}
+```
+
+The `POSRegisterID`/`POSBusinessName`/`POSVendorName` triple must match across pairing and every subsequent transaction. There is no unpairing API — unpairing is performed by a human at the terminal, and re-pairing a register to a different terminal automatically unpairs the previous one.
+
+### 2. Process a transaction
+
+```csharp
+var result = await client.ProcessTransactionAsync(new SmartConnectTransactionRequest
+{
+	TransactionType = SmartConnectTransactionType.CardPurchase,
+	AmountTotal = Money.FromDecimal(19.95m),
+	POSRegisterID = registerId,          // the same triple used at pairing
+	POSBusinessName = "My Store",
+	POSVendorName = "MyPos",
+	ClientTransactionRef = saleReference // stable across restarts — it is the crash-recovery key
+});
+
+switch (result.Status)
+{
+	case SmartConnectTransactionStatus.Accepted:
+		// result.AuthId, result.CardType, result.Receipt (fixed-width text — render monospaced) ...
+		break;
+	case SmartConnectTransactionStatus.Declined:
+	case SmartConnectTransactionStatus.Cancelled:
+		// Normal outcomes — show the operator, move on.
+		break;
+	case SmartConnectTransactionStatus.Unknown:
+		// MANDATORY handling: outcome ambiguous (timeout, lost response). Reconcile before retrying —
+		// result.FailureCause distinguishes "never sent" (safe retry) from "may have been processed".
+		break;
+	case SmartConnectTransactionStatus.Failed:
+		// result.FailureCause: ServiceError (fix request/config), TransportNotSent (safe to retry),
+		// StateStoreFailure (nothing sent — store unavailable; retry once it recovers).
+		break;
+}
+```
+
+Pass an `IProgress<SmartConnectPollingStatus>` to the second overload for UI feedback while polling (`Polling`, `Delayed`, `BackingOff`, `NetworkError`).
+
+### 3. Recover after a crash
+
+```csharp
+foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsync())
+{
+	if (!string.IsNullOrEmpty(pending.PollingUrl))
+	{
+		// Layer 1: resume polling the persisted URL.
+		var recovered = await client.ResumePollingAsync(pending.PollingUrl, pending.ClientTransactionRef);
+		// recovered.FailureCause == PollingUrlInvalid means the URL expired — fall through to Layer 2.
+	}
+	else
+	{
+		// Layer 2 (best effort): query the register's last transaction and match it to the sentinel
+		// yourself. Journal.GetTransResult is vendor-deprecated and undocumented for async mode —
+		// verify it against the dev environment before relying on it.
+		var last = await client.GetLastTransactionResultAsync(new SmartConnectRecoveryRequest
+		{
+			POSRegisterID = registerId,
+			POSBusinessName = "My Store",
+			POSVendorName = "MyPos"
+		});
+	}
+}
+```
+
+## Things to know before going live
+
+- **The state store is load-bearing, not optional.** The library writes a sentinel *before* every transaction POST and refuses to send if that write fails — it is the only thing that makes a crash mid-transaction recoverable. The bundled `FileBasedTransactionStateStore` is a reference implementation (pre-sized records, transient-IO retry, atomic writes); production systems with a database should implement `ISmartConnectTransactionState` against it.
+- **The polling URL contains a bearer credential** (`merchantAccessToken`). The library never logs it; your state store persists it, so restrict access to wherever that lands. Never log it yourself.
+- **There is no idempotency key and no programmatic cancel in the SmartConnect API.** A timed-out POST may still have charged the customer — that is what `Unknown` and the recovery flow are for. Do not blind-retry.
+- **Logging:** supply an `ILogger` via `SmartConnectClientConfiguration.Logger` — normal operation, backoff, store trouble, and every ambiguous outcome are logged with the client transaction reference. Logging failures never affect transaction processing.
 
 ## Licence
 
-MIT (to be added).
+MIT (to be added before first release).

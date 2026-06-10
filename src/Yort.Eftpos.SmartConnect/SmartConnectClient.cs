@@ -178,6 +178,8 @@ public sealed class SmartConnectClient : IDisposable
 			};
 		}
 
+		SafeLog(LogLevel.Information, null, $"Sending {request.TransactionType} for '{request.ClientTransactionRef}' (amount {request.AmountTotal.ToCents()} cents).");
+
 		HttpResponseMessage response;
 		try
 		{
@@ -247,6 +249,9 @@ public sealed class SmartConnectClient : IDisposable
 					TransactionId = initial.TransactionId
 				};
 			}
+
+			// (F2) transactionId ONLY — the URL carries the merchantAccessToken and is never logged.
+			SafeLog(LogLevel.Information, null, $"Polling URL received for '{request.ClientTransactionRef}' (transactionId '{initial.TransactionId}').");
 
 			try
 			{
@@ -365,6 +370,8 @@ public sealed class SmartConnectClient : IDisposable
 			new KeyValuePair<string, string?>("TransactionType", SmartConnectTransactionType.JournalGetTransResult)
 		};
 
+		SafeLog(LogLevel.Information, null, "Sending Journal.GetTransResult (Layer-2 recovery query).");
+
 		// (R5) No transport catch here — the typed exception propagates by design.
 		HttpResponseMessage response;
 		using (var httpRequest = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/Transaction"))
@@ -437,6 +444,7 @@ public sealed class SmartConnectClient : IDisposable
 		// exponential for that wait without disturbing it.
 		var nextDelay = _config.PollInterval;
 		var backoffInterval = _config.PollInterval;
+		var attempt = 0;
 
 		while (true)
 		{
@@ -444,8 +452,12 @@ public sealed class SmartConnectClient : IDisposable
 			{
 				// Poll exhaustion/abandonment is the "live caller" Unknown: the caller gets the result and
 				// owns reconciliation, so the sentinel closes as Unknown (distinct from POST-phase
-				// TransportUnknown, where no response ever arrived).
-				SafeLog(LogLevel.Error, null, $"Polling ended without a terminal answer for '{clientTransactionRef ?? "(journal query)"}' after {(Clock() - startedAt).TotalSeconds:0}s ({(_disposed ? "client disposed" : "MaxPollDuration exceeded")}) — outcome UNKNOWN; reconcile before retrying.");
+				// TransportUnknown, where no response ever arrived). Dispose is a deliberate host action
+				// (shutdown) — Warning; only genuine exhaustion is an Error.
+				SafeLog(
+					_disposed ? LogLevel.Warning : LogLevel.Error,
+					null,
+					$"Polling ended without a terminal answer for '{clientTransactionRef ?? "(journal query)"}' after {(Clock() - startedAt).TotalSeconds:0}s ({(_disposed ? "client disposed" : "MaxPollDuration exceeded")}) — outcome UNKNOWN; reconcile before retrying.");
 				if (clientTransactionRef != null)
 				{
 					await CloseSentinelQuietlyAsync(clientTransactionRef, SmartConnectTransactionStatus.Unknown).ConfigureAwait(false);
@@ -460,6 +472,8 @@ public sealed class SmartConnectClient : IDisposable
 
 			await PollDelay(nextDelay).ConfigureAwait(false);
 			nextDelay = _config.PollInterval;
+			attempt++;
+			SafeLog(LogLevel.Debug, null, $"Poll attempt {attempt} (transactionId '{transactionId}').");
 
 			try
 			{
@@ -518,6 +532,7 @@ public sealed class SmartConnectClient : IDisposable
 					if (poll.Progress == PollProgress.Completed)
 					{
 						var result = poll.Result!;
+						SafeLog(LogLevel.Information, null, $"Terminal state {result.Status} for '{clientTransactionRef ?? "(journal query)"}' (transactionId '{result.TransactionId}').");
 						if (clientTransactionRef != null)
 						{
 							await CloseSentinelQuietlyAsync(clientTransactionRef, result.Status).ConfigureAwait(false);
