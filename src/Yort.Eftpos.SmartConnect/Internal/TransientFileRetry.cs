@@ -1,6 +1,6 @@
 using System;
 using System.IO;
-using System.Threading;
+using System.Threading.Tasks;
 
 namespace Yort.Eftpos.SmartConnect.Internal;
 
@@ -21,15 +21,15 @@ internal static class TransientFileRetry
 	/// <summary>Runs <paramref name="operation"/>, retrying transient IO failures up to <paramref name="attempts"/> total tries.</summary>
 	/// <param name="operation">The IO operation. Must be idempotent — it may run multiple times.</param>
 	/// <param name="attempts">The maximum total tries (not extra retries).</param>
-	/// <param name="delay">The wait between tries; injectable so tests run with zero.</param>
+	/// <param name="delay">The wait between tries (via <see cref="Task.Delay(TimeSpan)"/> — never blocks the caller's thread); injectable so tests run with zero.</param>
 	/// <param name="onRetry">Invoked after each failed transient attempt (attempt number, exception) — for logging.</param>
-	internal static void Execute(Action operation, int attempts, TimeSpan delay, Action<int, IOException>? onRetry)
+	internal static async Task ExecuteAsync(Func<Task> operation, int attempts, TimeSpan delay, Action<int, IOException>? onRetry)
 	{
 		for (var attempt = 1; ; attempt++)
 		{
 			try
 			{
-				operation();
+				await operation().ConfigureAwait(false);
 				return;
 			}
 			catch (IOException ex) when (attempt < attempts && IsTransient(ex))
@@ -38,7 +38,7 @@ internal static class TransientFileRetry
 
 				if (delay > TimeSpan.Zero)
 				{
-					Thread.Sleep(delay);
+					await Task.Delay(delay).ConfigureAwait(false);
 				}
 			}
 		}

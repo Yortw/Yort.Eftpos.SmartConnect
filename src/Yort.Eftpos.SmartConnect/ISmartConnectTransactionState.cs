@@ -18,7 +18,10 @@ namespace Yort.Eftpos.SmartConnect;
 /// to the completed record (the polling URL carries a long token), so passing the pre-POST gate predicts
 /// the later update succeeding; (b) retry known-transient errors briefly before throwing (file sharing
 /// violations, SQL deadlocks/timeouts) — the library treats a <see cref="SaveTransactionAttemptAsync"/>
-/// throw as a gate refusal, so a throw should mean "store actually unavailable", not "one blip".</para>
+/// throw as a gate refusal, so a throw should mean "store actually unavailable", not "one blip";
+/// (c) be genuinely asynchronous — <see cref="SaveTransactionAttemptAsync"/> is the FIRST await in the
+/// client's transaction flow, so any synchronous work (IO, retry sleeps) executes on the caller's thread
+/// before anything yields, which on a WinForms POS is the UI thread at tender start.</para>
 /// </remarks>
 public interface ISmartConnectTransactionState
 {

@@ -170,7 +170,7 @@ public sealed class SmartConnectClient : IDisposable
 		}
 		catch (Exception ex)
 		{
-			SafeLog(LogLevel.Error, ex, $"State store refused the pre-POST sentinel write for '{request.ClientTransactionRef}' — transaction NOT sent. EFTPOS is unavailable at this register until the store recovers.");
+			SafeLog(LogLevel.Error, ex, "State store refused the pre-POST sentinel write for {ClientTransactionRef} — transaction NOT sent. EFTPOS is unavailable at this register until the store recovers.", request.ClientTransactionRef);
 			return new SmartConnectTransactionResult
 			{
 				Status = SmartConnectTransactionStatus.Failed,
@@ -178,7 +178,7 @@ public sealed class SmartConnectClient : IDisposable
 			};
 		}
 
-		SafeLog(LogLevel.Information, null, $"Sending {request.TransactionType} for '{request.ClientTransactionRef}' (amount {request.AmountTotal.ToCents()} cents).");
+		SafeLog(LogLevel.Information, null, "Sending {TransactionType} for {ClientTransactionRef} (amount {AmountTotalCents} cents).", request.TransactionType, request.ClientTransactionRef, request.AmountTotal.ToCents());
 
 		HttpResponseMessage response;
 		try
@@ -188,7 +188,7 @@ public sealed class SmartConnectClient : IDisposable
 		catch (SmartConnectTransportException ex) when (ex.Delivery == SmartConnectRequestDelivery.NotSent)
 		{
 			// Provably never reached the service — close the sentinel; the caller may retry freely.
-			SafeLog(LogLevel.Warning, ex, $"Transaction POST never reached SmartConnect ({ex.InnerException?.GetType().Name}) for '{request.ClientTransactionRef}' — nothing was sent; safe to retry.");
+			SafeLog(LogLevel.Warning, ex, "Transaction POST never reached SmartConnect ({FailureType}) for {ClientTransactionRef} — nothing was sent; safe to retry.", ex.InnerException?.GetType().Name, request.ClientTransactionRef);
 			await CloseSentinelQuietlyAsync(request.ClientTransactionRef, SmartConnectTransactionStatus.Failed).ConfigureAwait(false);
 			return new SmartConnectTransactionResult
 			{
@@ -200,7 +200,7 @@ public sealed class SmartConnectClient : IDisposable
 		{
 			// Outcome unknown — the POST may have been processed. The sentinel MUST stay pending so
 			// recovery investigates; closing it would hide a possibly-live charge.
-			SafeLog(LogLevel.Error, ex, $"Transaction POST outcome is UNKNOWN ({ex.InnerException?.GetType().Name}) for '{request.ClientTransactionRef}' — the transaction may have been processed; recovery must investigate. Distinct from poll exhaustion: no response was ever received.");
+			SafeLog(LogLevel.Error, ex, "Transaction POST outcome is UNKNOWN ({FailureType}) for {ClientTransactionRef} — the transaction may have been processed; recovery must investigate. Distinct from poll exhaustion: no response was ever received.", ex.InnerException?.GetType().Name, request.ClientTransactionRef);
 			return new SmartConnectTransactionResult
 			{
 				Status = SmartConnectTransactionStatus.Unknown,
@@ -208,6 +208,14 @@ public sealed class SmartConnectClient : IDisposable
 			};
 		}
 
+		return await HandleInitialResponseAsync(request, response, progress).ConfigureAwait(false);
+	}
+
+	// The post-POST half of the Decision-9 mapping: service rejection → ServiceError (sentinel closed);
+	// unusable 200 → Unknown/TransportUnknown (sentinel pending); good response → persist polling details
+	// (best-effort) and poll to a terminal outcome.
+	private async Task<SmartConnectTransactionResult> HandleInitialResponseAsync(SmartConnectTransactionRequest request, HttpResponseMessage response, IProgress<SmartConnectPollingStatus>? progress)
+	{
 		using (response)
 		{
 			var body = response.Content == null
@@ -218,7 +226,7 @@ public sealed class SmartConnectClient : IDisposable
 			{
 				// The service answered and rejected it — terminal; fix the request/config, blind retry
 				// will fail again.
-				SafeLog(LogLevel.Error, null, $"SmartConnect rejected the transaction POST for '{request.ClientTransactionRef}': {GetErrorMessage(response, body)}");
+				SafeLog(LogLevel.Error, null, "SmartConnect rejected the transaction POST for {ClientTransactionRef}: {ServiceError}", request.ClientTransactionRef, GetErrorMessage(response, body));
 				await CloseSentinelQuietlyAsync(request.ClientTransactionRef, SmartConnectTransactionStatus.Failed).ConfigureAwait(false);
 				return new SmartConnectTransactionResult
 				{
@@ -241,7 +249,7 @@ public sealed class SmartConnectClient : IDisposable
 			{
 				// 200 but unusable — the transaction may be live on the pinpad with no way to poll it.
 				// Outcome unknown, sentinel stays pending for recovery (F10).
-				SafeLog(LogLevel.Error, null, $"SmartConnect accepted the transaction POST for '{request.ClientTransactionRef}' but returned no polling URL — outcome is UNKNOWN; recovery must investigate.");
+				SafeLog(LogLevel.Error, null, "SmartConnect accepted the transaction POST for {ClientTransactionRef} but returned no polling URL — outcome is UNKNOWN; recovery must investigate.", request.ClientTransactionRef);
 				return new SmartConnectTransactionResult
 				{
 					Status = SmartConnectTransactionStatus.Unknown,
@@ -251,7 +259,7 @@ public sealed class SmartConnectClient : IDisposable
 			}
 
 			// (F2) transactionId ONLY — the URL carries the merchantAccessToken and is never logged.
-			SafeLog(LogLevel.Information, null, $"Polling URL received for '{request.ClientTransactionRef}' (transactionId '{initial.TransactionId}').");
+			SafeLog(LogLevel.Information, null, "Polling URL received for {ClientTransactionRef} (transactionId {TransactionId}).", request.ClientTransactionRef, initial.TransactionId);
 
 			try
 			{
@@ -263,7 +271,7 @@ public sealed class SmartConnectClient : IDisposable
 				// and most likely completes normally — continue on the in-memory URL. (G7) The URL was an
 				// argument to the failing call and store exceptions commonly echo arguments: log the
 				// exception TYPE only, never its message.
-				SafeLog(LogLevel.Error, null, $"Failed to persist polling details ({ex.GetType().Name}) for '{request.ClientTransactionRef}' — continuing on the in-memory URL. Crash recovery for this transaction is degraded: manual verification may be needed if the POS terminates before completion.");
+				SafeLog(LogLevel.Error, null, "Failed to persist polling details ({ExceptionType}) for {ClientTransactionRef} — continuing on the in-memory URL. Crash recovery for this transaction is degraded: manual verification may be needed if the POS terminates before completion.", ex.GetType().Name, request.ClientTransactionRef);
 			}
 
 			return await PollForResultAsync(initial.PollingUrl!, initial.TransactionId, request.ClientTransactionRef, progress).ConfigureAwait(false);
@@ -388,7 +396,7 @@ public sealed class SmartConnectClient : IDisposable
 
 			if (!response.IsSuccessStatusCode)
 			{
-				SafeLog(LogLevel.Error, null, $"SmartConnect rejected the Journal.GetTransResult query: {GetErrorMessage(response, body)}");
+				SafeLog(LogLevel.Error, null, "SmartConnect rejected the Journal.GetTransResult query: {ServiceError}", GetErrorMessage(response, body));
 				return new SmartConnectTransactionResult
 				{
 					Status = SmartConnectTransactionStatus.Failed,
@@ -457,7 +465,10 @@ public sealed class SmartConnectClient : IDisposable
 				SafeLog(
 					_disposed ? LogLevel.Warning : LogLevel.Error,
 					null,
-					$"Polling ended without a terminal answer for '{clientTransactionRef ?? "(journal query)"}' after {(Clock() - startedAt).TotalSeconds:0}s ({(_disposed ? "client disposed" : "MaxPollDuration exceeded")}) — outcome UNKNOWN; reconcile before retrying.");
+					"Polling ended without a terminal answer for {ClientTransactionRef} after {ElapsedSeconds}s ({Reason}) — outcome UNKNOWN; reconcile before retrying.",
+					clientTransactionRef ?? "(journal query)",
+					(int)(Clock() - startedAt).TotalSeconds,
+					_disposed ? "client disposed" : "MaxPollDuration exceeded");
 				if (clientTransactionRef != null)
 				{
 					await CloseSentinelQuietlyAsync(clientTransactionRef, SmartConnectTransactionStatus.Unknown).ConfigureAwait(false);
@@ -473,7 +484,7 @@ public sealed class SmartConnectClient : IDisposable
 			await PollDelay(nextDelay).ConfigureAwait(false);
 			nextDelay = _config.PollInterval;
 			attempt++;
-			SafeLog(LogLevel.Debug, null, $"Poll attempt {attempt} (transactionId '{transactionId}').");
+			SafeLog(LogLevel.Debug, null, "Poll attempt {Attempt} (transactionId {TransactionId}).", attempt, transactionId);
 
 			try
 			{
@@ -484,7 +495,7 @@ public sealed class SmartConnectClient : IDisposable
 					{
 						backoffInterval = Min(TimeSpan.FromTicks(backoffInterval.Ticks * 2), _config.BackoffCap);
 						nextDelay = GetRetryAfterDelay(response) ?? backoffInterval;
-						SafeLog(LogLevel.Debug, null, $"Rate-limited (HTTP 429) for '{clientTransactionRef}' — backing off; next poll in {nextDelay.TotalSeconds:0}s.");
+						SafeLog(LogLevel.Debug, null, "Rate-limited (HTTP 429) for {ClientTransactionRef} — backing off; next poll in {NextDelaySeconds}s.", clientTransactionRef, (int)nextDelay.TotalSeconds);
 						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.BackingOff });
 						continue;
 					}
@@ -494,7 +505,7 @@ public sealed class SmartConnectClient : IDisposable
 						// (F8) An ANSWER saying the URL itself is no good — spinning NetworkError to
 						// timeout would waste MaxPollDuration and mislead the operator. The sentinel stays
 						// pending: the outcome is unresolved and Layer-2 recovery must investigate.
-						SafeLog(LogLevel.Error, null, $"SmartConnect answered the poll with HTTP {(int)response.StatusCode} for '{clientTransactionRef}' — the polling URL is invalid or expired. Outcome UNKNOWN; fall through to journal recovery.");
+						SafeLog(LogLevel.Error, null, "SmartConnect answered the poll with HTTP {StatusCode} for {ClientTransactionRef} — the polling URL is invalid or expired. Outcome UNKNOWN; fall through to journal recovery.", (int)response.StatusCode, clientTransactionRef);
 						return new SmartConnectTransactionResult
 						{
 							Status = SmartConnectTransactionStatus.Unknown,
@@ -532,7 +543,7 @@ public sealed class SmartConnectClient : IDisposable
 					if (poll.Progress == PollProgress.Completed)
 					{
 						var result = poll.Result!;
-						SafeLog(LogLevel.Information, null, $"Terminal state {result.Status} for '{clientTransactionRef ?? "(journal query)"}' (transactionId '{result.TransactionId}').");
+						SafeLog(LogLevel.Information, null, "Terminal state {Status} for {ClientTransactionRef} (transactionId {TransactionId}).", result.Status, clientTransactionRef ?? "(journal query)", result.TransactionId);
 						if (clientTransactionRef != null)
 						{
 							await CloseSentinelQuietlyAsync(clientTransactionRef, result.Status).ConfigureAwait(false);
@@ -554,7 +565,7 @@ public sealed class SmartConnectClient : IDisposable
 				// (F11) Transient transport — report and retry; the PollDelay at the top of the loop still
 				// runs, so there is no tight retry-storm. NEVER treat "couldn't reach the server" as "URL
 				// expired" — a live transaction may still be fine.
-				SafeLog(LogLevel.Warning, ex, $"Network error during poll for '{clientTransactionRef}' — retrying on the next interval.");
+				SafeLog(LogLevel.Warning, ex, "Network error during poll for {ClientTransactionRef} — retrying on the next interval.", clientTransactionRef);
 				progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError, Error = ex });
 			}
 		}
@@ -663,13 +674,14 @@ public sealed class SmartConnectClient : IDisposable
 		}
 		catch (Exception ex)
 		{
-			SafeLog(LogLevel.Warning, null, $"Failed to persist terminal state ({ex.GetType().Name}) for '{clientTransactionRef}' — the outcome was still returned; the sentinel stays pending for recovery to investigate.");
+			SafeLog(LogLevel.Warning, null, "Failed to persist terminal state ({ExceptionType}) for {ClientTransactionRef} — the outcome was still returned; the sentinel stays pending for recovery to investigate.", ex.GetType().Name, clientTransactionRef);
 		}
 	}
 
 	// (G10) Diagnostics must be strictly weaker than the path they diagnose — a logger failure never
-	// fails the operation being logged.
-	private void SafeLog(LogLevel level, Exception? exception, string message)
+	// fails the operation being logged. Message templates with args preserve structured logging (H3);
+	// (G7) the polling URL must never appear as a template argument either.
+	private void SafeLog(LogLevel level, Exception? exception, string messageTemplate, params object?[] args)
 	{
 		var logger = _config.Logger;
 		if (logger == null)
@@ -679,7 +691,7 @@ public sealed class SmartConnectClient : IDisposable
 
 		try
 		{
-			logger.Log(level, 0, message, exception, (state, _) => state);
+			logger.Log(level, exception, messageTemplate, args);
 		}
 		catch
 		{

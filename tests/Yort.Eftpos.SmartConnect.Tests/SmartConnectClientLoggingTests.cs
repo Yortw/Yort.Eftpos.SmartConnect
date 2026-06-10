@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
@@ -137,7 +138,35 @@ public class SmartConnectClientLoggingTests
 		{
 			Assert.DoesNotContain(Token, e.Message);
 			Assert.DoesNotContain(Token, e.Exception?.ToString() ?? string.Empty);
+			// (H3) Sweep the raw STATE pairs too: a token passed as an argument whose placeholder is
+			// omitted from the template never renders into the message but still reaches structured
+			// providers that index raw state.
+			Assert.All(e.State, pair => Assert.DoesNotContain(Token, pair.Value?.ToString() ?? string.Empty));
 		});
+	}
+
+	[Fact]
+	public async Task SafeLog_ProducesStructuredTemplates_NotPreFormattedStrings()
+	{
+		// (H3) A lazy mechanical conversion could keep pre-interpolated strings with zero args and every
+		// other test stays green — the exact review note un-fixed. Structured providers need the template
+		// and named values separately.
+		var logger = new ListLogger();
+		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson)));
+		var index = -1;
+		handler = new MockHttpHandler(_ =>
+		{
+			var i = Interlocked.Increment(ref index);
+			return Task.FromResult(Json(HttpStatusCode.OK, i == 0 ? InitialResponseJson : AcceptedPollJson));
+		});
+		using var client = CreateClient(handler, new InMemoryTransactionStateStore(), logger);
+
+		await client.ProcessTransactionAsync(CreateRequest());
+
+		var sending = logger.Entries.Single(e => e.Message.StartsWith("Sending Card.Purchase"));
+		Assert.Contains(sending.State, p => p.Key == "TransactionType" && (string?)p.Value == "Card.Purchase");
+		Assert.Contains(sending.State, p => p.Key == "ClientTransactionRef" && (string?)p.Value == Ref);
+		Assert.Contains(sending.State, p => p.Key == "{OriginalFormat}" && ((string?)p.Value)!.Contains("{TransactionType}"));
 	}
 
 	[Fact]

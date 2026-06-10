@@ -1,16 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using Xunit;
 using Yort.Eftpos.SmartConnect.Internal;
 
 namespace Yort.Eftpos.SmartConnect.Tests;
 
 /// <summary>
-/// Tests for the bounded transient-IO retry helper (ADR Decision 10, G4/G5). Transient is defined
-/// affirmatively — sharing violation (0x80070020) and lock violation (0x80070021) only — with a
-/// conservative default of NO retry for anything else. All tests are deterministic: constructed
-/// exceptions, injected zero delay, no real file locks.
+/// Tests for the bounded transient-IO retry helper (ADR Decision 10, G4/G5; async per Task 12.5). Transient
+/// is defined affirmatively — sharing violation (0x80070020) and lock violation (0x80070021) only — with a
+/// conservative default of NO retry for anything else. All tests are deterministic: constructed exceptions,
+/// injected delays, no real file locks.
 /// </summary>
 public class TransientFileRetryTests
 {
@@ -21,42 +22,46 @@ public class TransientFileRetryTests
 	private static IOException Transient() => new IOException("in use", SharingViolation);
 
 	[Fact]
-	public void Execute_TransientFailureThenSuccess_SucceedsWithTwoAttempts()
+	public async Task Execute_TransientFailureThenSuccess_SucceedsWithTwoAttempts()
 	{
 		var attempts = 0;
-		TransientFileRetry.Execute(() =>
+		await TransientFileRetry.ExecuteAsync(() =>
 		{
 			attempts++;
 			if (attempts == 1)
 			{
 				throw Transient();
 			}
+
+			return Task.CompletedTask;
 		}, 3, TimeSpan.Zero, onRetry: null);
 
 		Assert.Equal(2, attempts);
 	}
 
 	[Fact]
-	public void Execute_LockViolationThenSuccess_AlsoRetries()
+	public async Task Execute_LockViolationThenSuccess_AlsoRetries()
 	{
 		var attempts = 0;
-		TransientFileRetry.Execute(() =>
+		await TransientFileRetry.ExecuteAsync(() =>
 		{
 			attempts++;
 			if (attempts == 1)
 			{
 				throw new IOException("locked", LockViolation);
 			}
+
+			return Task.CompletedTask;
 		}, 3, TimeSpan.Zero, onRetry: null);
 
 		Assert.Equal(2, attempts);
 	}
 
 	[Fact]
-	public void Execute_PersistentTransientFailure_ThrowsAfterBoundedAttempts()
+	public async Task Execute_PersistentTransientFailure_ThrowsAfterBoundedAttempts()
 	{
 		var attempts = 0;
-		var thrown = Assert.Throws<IOException>(() => TransientFileRetry.Execute(() =>
+		var thrown = await Assert.ThrowsAsync<IOException>(() => TransientFileRetry.ExecuteAsync(() =>
 		{
 			attempts++;
 			throw Transient();
@@ -67,12 +72,12 @@ public class TransientFileRetryTests
 	}
 
 	[Fact]
-	public void Execute_DiskFull_ThrowsImmediately_NoRetry()
+	public async Task Execute_DiskFull_ThrowsImmediately_NoRetry()
 	{
 		// Disk-full is an IOException but retrying cannot free disk — the pre-sized sentinel exists
 		// for this case. Zero retries.
 		var attempts = 0;
-		Assert.Throws<IOException>(() => TransientFileRetry.Execute(() =>
+		await Assert.ThrowsAsync<IOException>(() => TransientFileRetry.ExecuteAsync(() =>
 		{
 			attempts++;
 			throw new IOException("disk full", DiskFull);
@@ -82,11 +87,11 @@ public class TransientFileRetryTests
 	}
 
 	[Fact]
-	public void Execute_UnrecognisedIOException_ThrowsImmediately_ConservativeDefault()
+	public async Task Execute_UnrecognisedIOException_ThrowsImmediately_ConservativeDefault()
 	{
 		// The load-bearing invariant: anything not affirmatively classified transient gets NO retry.
 		var attempts = 0;
-		Assert.Throws<IOException>(() => TransientFileRetry.Execute(() =>
+		await Assert.ThrowsAsync<IOException>(() => TransientFileRetry.ExecuteAsync(() =>
 		{
 			attempts++;
 			throw new IOException("novel failure");
@@ -96,10 +101,10 @@ public class TransientFileRetryTests
 	}
 
 	[Fact]
-	public void Execute_UnauthorizedAccess_PassesThroughUntouched()
+	public async Task Execute_UnauthorizedAccess_PassesThroughUntouched()
 	{
 		var attempts = 0;
-		Assert.Throws<UnauthorizedAccessException>(() => TransientFileRetry.Execute(() =>
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => TransientFileRetry.ExecuteAsync(() =>
 		{
 			attempts++;
 			throw new UnauthorizedAccessException("denied");
@@ -109,10 +114,10 @@ public class TransientFileRetryTests
 	}
 
 	[Fact]
-	public void Execute_DirectoryNotFound_PassesThroughUntouched()
+	public async Task Execute_DirectoryNotFound_PassesThroughUntouched()
 	{
 		var attempts = 0;
-		Assert.Throws<DirectoryNotFoundException>(() => TransientFileRetry.Execute(() =>
+		await Assert.ThrowsAsync<DirectoryNotFoundException>(() => TransientFileRetry.ExecuteAsync(() =>
 		{
 			attempts++;
 			throw new DirectoryNotFoundException("gone");
@@ -122,11 +127,11 @@ public class TransientFileRetryTests
 	}
 
 	[Fact]
-	public void Execute_OnRetryCallback_ReceivesAttemptNumberAndException()
+	public async Task Execute_OnRetryCallback_ReceivesAttemptNumberAndException()
 	{
 		var notifications = new List<(int Attempt, IOException Exception)>();
-		TransientFileRetry.Execute(
-			new FailTwiceThenSucceed().Invoke,
+		await TransientFileRetry.ExecuteAsync(
+			new FailTwiceThenSucceed().InvokeAsync,
 			3,
 			TimeSpan.Zero,
 			onRetry: (attempt, ex) => notifications.Add((attempt, ex)));
@@ -137,17 +142,41 @@ public class TransientFileRetryTests
 		Assert.All(notifications, n => Assert.Equal(SharingViolation, n.Exception.HResult));
 	}
 
+	[Fact]
+	public void Execute_RetryDelay_DoesNotBlockTheCaller()
+	{
+		// (H2) The motivating behaviour of Task 12.5: the old Thread.Sleep implementation completed the
+		// whole retry (including the wait) before returning, so this assertion line would only execute
+		// after the delay with a COMPLETED task. The async implementation returns at the first
+		// Task.Delay await — incomplete.
+		var attempts = 0;
+		var task = TransientFileRetry.ExecuteAsync(() =>
+		{
+			attempts++;
+			if (attempts == 1)
+			{
+				throw Transient();
+			}
+
+			return Task.CompletedTask;
+		}, 3, TimeSpan.FromMilliseconds(200), onRetry: null);
+
+		Assert.False(task.IsCompleted);
+	}
+
 	private sealed class FailTwiceThenSucceed
 	{
 		private int _calls;
 
-		public void Invoke()
+		public Task InvokeAsync()
 		{
 			_calls++;
 			if (_calls <= 2)
 			{
 				throw Transient();
 			}
+
+			return Task.CompletedTask;
 		}
 	}
 }

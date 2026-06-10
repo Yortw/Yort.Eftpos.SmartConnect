@@ -246,7 +246,7 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 		var store = NewStore();
 		store.RetryDelay = TimeSpan.Zero;
 		var attempts = 0;
-		store.WriteAllText = (path, contents) =>
+		store.WriteFileAsync = (path, contents) =>
 		{
 			attempts++;
 			if (attempts == 1)
@@ -255,6 +255,7 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 			}
 
 			File.WriteAllText(path, contents);
+			return Task.CompletedTask;
 		};
 
 		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
@@ -271,7 +272,7 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 		var store = NewStore();
 		store.RetryDelay = TimeSpan.Zero;
 		var attempts = 0;
-		store.WriteAllText = (path, contents) =>
+		store.WriteFileAsync = (path, contents) =>
 		{
 			attempts++;
 			throw new IOException("in use", SharingViolation);
@@ -292,7 +293,7 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 		var logger = new ListLogger();
 		var store = new FileBasedTransactionStateStore(_directory, logger) { RetryDelay = TimeSpan.Zero };
 		var attempts = 0;
-		store.WriteAllText = (path, contents) =>
+		store.WriteFileAsync = (path, contents) =>
 		{
 			attempts++;
 			if (attempts == 1)
@@ -301,6 +302,7 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 			}
 
 			File.WriteAllText(path, contents);
+			return Task.CompletedTask;
 		};
 
 		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
@@ -314,7 +316,7 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 		// (G10) Diagnostics must be strictly weaker than the path they diagnose.
 		var store = new FileBasedTransactionStateStore(_directory, new ThrowingLogger()) { RetryDelay = TimeSpan.Zero };
 		var attempts = 0;
-		store.WriteAllText = (path, contents) =>
+		store.WriteFileAsync = (path, contents) =>
 		{
 			attempts++;
 			if (attempts == 1)
@@ -323,10 +325,62 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 			}
 
 			File.WriteAllText(path, contents);
+			return Task.CompletedTask;
 		};
 
 		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
 
+		Assert.Single(await store.GetPendingTransactionsAsync());
+	}
+
+	// --- Task 12.5 (H2): the store is genuinely asynchronous ---
+
+	[Fact]
+	public void Save_WithRetryDelayPending_ReturnsIncompleteTaskImmediately()
+	{
+		// (H2) A secretly-synchronous implementation completes the work AND the retry wait before
+		// returning, so this assertion line would only run after the delay with a completed task. The
+		// async implementation returns at the first Task.Delay await.
+		var store = NewStore();
+		store.RetryDelay = TimeSpan.FromMilliseconds(200);
+		var attempts = 0;
+		store.WriteFileAsync = (path, contents) =>
+		{
+			attempts++;
+			if (attempts == 1)
+			{
+				throw new IOException("in use", SharingViolation);
+			}
+
+			File.WriteAllText(path, contents);
+			return Task.CompletedTask;
+		};
+
+		var task = store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+
+		Assert.False(task.IsCompleted);
+	}
+
+	// --- Task 12.5 (H4): the semaphore is released when a write faults ---
+
+	[Fact]
+	public async Task Save_NonTransientFault_ReleasesSemaphore_SubsequentOperationSucceeds()
+	{
+		// A leaked semaphore would hang every later store call - the worst possible POS failure mode
+		// (every subsequent tender freezes at the gate).
+		var store = NewStore();
+		store.RetryDelay = TimeSpan.Zero;
+		store.WriteFileAsync = (path, contents) => throw new IOException("disk full", unchecked((int)0x80070070));
+
+		await Assert.ThrowsAsync<IOException>(() => store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500));
+
+		store.WriteFileAsync = (path, contents) =>
+		{
+			File.WriteAllText(path, contents);
+			return Task.CompletedTask;
+		};
+
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
 		Assert.Single(await store.GetPendingTransactionsAsync());
 	}
 }
