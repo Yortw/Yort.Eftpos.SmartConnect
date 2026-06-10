@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Yort.Eftpos.SmartConnect.Internal;
 
 namespace Yort.Eftpos.SmartConnect;
 
@@ -12,16 +15,35 @@ namespace Yort.Eftpos.SmartConnect;
 /// database should provide their own store.
 /// </summary>
 /// <remarks>
-/// Writes are atomic (write-temp-then-replace) so a crash mid-write cannot truncate a record. The directory
-/// is per-store; point each register at its own directory. Files contain the polling URL, which carries a
-/// bearer token — restrict access to the directory accordingly.
+/// <para>Writes are atomic (write-temp-then-replace) so a crash mid-write cannot truncate a record. The
+/// directory is per-store; point each register at its own directory. Files contain the polling URL, which
+/// carries a bearer token — restrict access to the directory accordingly.</para>
+/// <para>The attempt record is pre-sized to <see cref="ReservationBytes"/> so passing the pre-POST gate
+/// predicts the later polling-details update succeeding (ADR Decision 10). Atomicity deliberately wins over
+/// prediction purity: the temp-then-replace step transiently needs ~2× the reservation, so the gate is a
+/// good predictor, not a guarantee. Records larger than the reservation grow the file and succeed.</para>
+/// <para>Transient IO failures (sharing/lock violations) are retried a small bounded number of times so a
+/// thrown exception means "store actually unavailable", not "one anti-virus scan blip".</para>
 /// </remarks>
 public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionState
 {
+	/// <summary>
+	/// The capacity (bytes) the attempt record reserves up front so the later polling-details update stays
+	/// in the same size class — passing the gate should predict the update succeeding (ADR Decision 10).
+	/// </summary>
+	public const int ReservationBytes = 4096;
+
 	private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions { WriteIndented = true };
 
 	private readonly string _directory;
 	private readonly object _sync = new object();
+	private readonly ILogger? _logger;
+
+	/// <summary>The delay between transient-IO retry attempts. Internal seam for deterministic tests.</summary>
+	internal TimeSpan RetryDelay { get; set; } = TransientFileRetry.DefaultDelay;
+
+	/// <summary>The file-write operation. Internal seam so tests can inject IO failures deterministically.</summary>
+	internal Action<string, string> WriteAllText { get; set; } = File.WriteAllText;
 
 	/// <summary>Creates a store backed by the given directory, creating it if it does not exist.</summary>
 	/// <param name="directory">The directory in which to store transaction-state files.</param>
@@ -37,8 +59,27 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 		Directory.CreateDirectory(_directory);
 	}
 
+	/// <summary>
+	/// Creates a store backed by the given directory, logging retry attempts and reservation overflows to
+	/// <paramref name="logger"/>. Logging failures are suppressed and never fail the store operation; log
+	/// text never includes the polling URL.
+	/// </summary>
+	/// <param name="directory">The directory in which to store transaction-state files.</param>
+	/// <param name="logger">The logger for diagnostics.</param>
+	/// <exception cref="ArgumentException"><paramref name="directory"/> is null, empty, or whitespace.</exception>
+	public FileBasedTransactionStateStore(string directory, ILogger logger)
+		: this(directory)
+	{
+		_logger = logger;
+	}
+
 	/// <inheritdoc />
-	/// <exception cref="IOException">The state file could not be written.</exception>
+	/// <remarks>
+	/// Uses create-overwrite semantics: saving over an existing record (completed, failed, or partial
+	/// garbage) produces a fresh pending sentinel, so gate-refusal retries reusing the same reference are
+	/// idempotent.
+	/// </remarks>
+	/// <exception cref="IOException">The state file could not be written (after bounded transient retries).</exception>
 	public Task SaveTransactionAttemptAsync(string clientTransactionRef, string transactionType, long amountTotalCents)
 	{
 		var record = new StoredRecord
@@ -51,7 +92,7 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 
 		lock (_sync)
 		{
-			WriteAtomic(PathFor(clientTransactionRef), record);
+			ExecuteWithRetry(() => WriteAtomic(PathFor(clientTransactionRef), record));
 		}
 
 		return Task.CompletedTask;
@@ -59,15 +100,20 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 
 	/// <inheritdoc />
 	/// <exception cref="InvalidOperationException">No state record exists for the reference, or it is unreadable/corrupt.</exception>
-	/// <exception cref="IOException">The state file could not be written.</exception>
+	/// <exception cref="IOException">The state file could not be written (after bounded transient retries).</exception>
 	public Task UpdatePollingDetailsAsync(string clientTransactionRef, string pollingUrl, string transactionId)
 	{
 		lock (_sync)
 		{
-			var record = ReadRequired(clientTransactionRef);
-			record.PollingUrl = pollingUrl;
-			record.TransactionId = transactionId;
-			WriteAtomic(PathFor(clientTransactionRef), record);
+			// The whole read-modify-write retries as a unit — it is idempotent, and a transient failure
+			// can hit the read just as easily as the write.
+			ExecuteWithRetry(() =>
+			{
+				var record = ReadRequired(clientTransactionRef);
+				record.PollingUrl = pollingUrl;
+				record.TransactionId = transactionId;
+				WriteAtomic(PathFor(clientTransactionRef), record);
+			});
 		}
 
 		return Task.CompletedTask;
@@ -75,15 +121,18 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 
 	/// <inheritdoc />
 	/// <exception cref="InvalidOperationException">No state record exists for the reference, or it is unreadable/corrupt.</exception>
-	/// <exception cref="IOException">The state file could not be written.</exception>
+	/// <exception cref="IOException">The state file could not be written (after bounded transient retries).</exception>
 	public Task UpdateCompletedAsync(string clientTransactionRef, SmartConnectTransactionStatus status)
 	{
 		lock (_sync)
 		{
-			var record = ReadRequired(clientTransactionRef);
-			record.Status = status;
-			record.CompletedAt = DateTimeOffset.UtcNow;
-			WriteAtomic(PathFor(clientTransactionRef), record);
+			ExecuteWithRetry(() =>
+			{
+				var record = ReadRequired(clientTransactionRef);
+				record.Status = status;
+				record.CompletedAt = DateTimeOffset.UtcNow;
+				WriteAtomic(PathFor(clientTransactionRef), record);
+			});
 		}
 
 		return Task.CompletedTask;
@@ -126,21 +175,33 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 
 	/// <inheritdoc />
 	/// <exception cref="InvalidOperationException">The record does not exist, is unreadable/corrupt, or has not reached a terminal state.</exception>
-	/// <exception cref="IOException">The state file could not be deleted.</exception>
+	/// <exception cref="IOException">The state file could not be deleted (after bounded transient retries).</exception>
 	public Task RemoveAsync(string clientTransactionRef)
 	{
 		lock (_sync)
 		{
-			var record = ReadRequired(clientTransactionRef);
-			if (record.Status == null)
+			ExecuteWithRetry(() =>
 			{
-				throw new InvalidOperationException($"Transaction '{clientTransactionRef}' has not reached a terminal state and cannot be removed.");
-			}
+				var record = ReadRequired(clientTransactionRef);
+				if (record.Status == null)
+				{
+					throw new InvalidOperationException($"Transaction '{clientTransactionRef}' has not reached a terminal state and cannot be removed.");
+				}
 
-			File.Delete(PathFor(clientTransactionRef));
+				File.Delete(PathFor(clientTransactionRef));
+			});
 		}
 
 		return Task.CompletedTask;
+	}
+
+	private void ExecuteWithRetry(Action operation)
+	{
+		TransientFileRetry.Execute(
+			operation,
+			TransientFileRetry.DefaultAttempts,
+			RetryDelay,
+			(attempt, ex) => SafeLog(LogLevel.Warning, ex, $"Transient IO failure on transaction-state operation (attempt {attempt} of {TransientFileRetry.DefaultAttempts}); retrying."));
 	}
 
 	// Escape so refs containing path-hostile characters (e.g. "branch/01-...") map to a safe, reversible file name.
@@ -155,7 +216,20 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 			throw new InvalidOperationException($"No transaction state found for '{clientTransactionRef}'.");
 		}
 
-		var record = TryRead(path);
+		// IOException deliberately propagates (a transient read failure is retryable by the caller's
+		// retry wrap); only parse failures map to the non-retryable "corrupt" InvalidOperationException.
+		var json = File.ReadAllText(path);
+
+		StoredRecord? record;
+		try
+		{
+			record = JsonSerializer.Deserialize<StoredRecord>(json, JsonOptions);
+		}
+		catch (JsonException)
+		{
+			record = null;
+		}
+
 		if (record == null)
 		{
 			throw new InvalidOperationException($"Transaction state for '{clientTransactionRef}' is unreadable or corrupt.");
@@ -180,12 +254,12 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 		}
 	}
 
-	private static void WriteAtomic(string path, StoredRecord record)
+	private void WriteAtomic(string path, StoredRecord record)
 	{
-		var json = JsonSerializer.Serialize(record, JsonOptions);
+		var json = SerializePadded(record);
 		var tempPath = path + ".tmp";
 
-		File.WriteAllText(tempPath, json);
+		WriteAllText(tempPath, json);
 
 		// Replace is atomic when the destination exists; Move is atomic for the first write. Either way a
 		// reader/recovery never sees a half-written .json.
@@ -199,6 +273,49 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 		}
 	}
 
+	private string SerializePadded(StoredRecord record)
+	{
+		record.Padding = string.Empty;
+		var json = JsonSerializer.Serialize(record, JsonOptions);
+		var deficit = ReservationBytes - Encoding.UTF8.GetByteCount(json);
+
+		if (deficit > 0)
+		{
+			// Spaces are one UTF-8 byte each and need no JSON escaping, so the padded total is exactly
+			// the reservation.
+			record.Padding = new string(' ', deficit);
+			return JsonSerializer.Serialize(record, JsonOptions);
+		}
+
+		if (deficit < 0)
+		{
+			// (G8) Overflow grows the file and succeeds — but the pre-sized gate's disk-full prediction
+			// is degraded for this record, and that must be observable.
+			SafeLog(LogLevel.Warning, null, $"Transaction-state record exceeds the {ReservationBytes}-byte reservation; the pre-sized sentinel's disk-full prediction is degraded for this record.");
+		}
+
+		return json;
+	}
+
+	// Diagnostics must be strictly weaker than the path they diagnose (G10) — a logger failure never
+	// fails the store operation.
+	private void SafeLog(LogLevel level, Exception? exception, string message)
+	{
+		if (_logger == null)
+		{
+			return;
+		}
+
+		try
+		{
+			_logger.Log(level, 0, message, exception, (state, _) => state);
+		}
+		catch
+		{
+			// Suppressed by design.
+		}
+	}
+
 	private sealed class StoredRecord
 	{
 		public string ClientTransactionRef { get; set; } = string.Empty;
@@ -209,5 +326,9 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 		public SmartConnectTransactionStatus? Status { get; set; }
 		public DateTimeOffset CreatedAt { get; set; }
 		public DateTimeOffset? CompletedAt { get; set; }
+
+		// Reserves the completed record's size class at sentinel time (ADR Decision 10) — recomputed on
+		// every rewrite so the file stays at the reservation while real content grows.
+		public string Padding { get; set; } = string.Empty;
 	}
 }

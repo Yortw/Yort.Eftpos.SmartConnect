@@ -10,10 +10,15 @@ namespace Yort.Eftpos.SmartConnect;
 /// optional event — supply an implementation via <see cref="SmartConnectClientConfiguration.StateStore"/>.
 /// </summary>
 /// <remarks>
-/// The lifecycle is: <see cref="SaveTransactionAttemptAsync"/> (before the POST) →
+/// <para>The lifecycle is: <see cref="SaveTransactionAttemptAsync"/> (before the POST) →
 /// <see cref="UpdatePollingDetailsAsync"/> (once the polling URL is received) →
 /// <see cref="UpdateCompletedAsync"/> (terminal state). "Pending" is defined by the absence of completion;
-/// the consumer calls <see cref="RemoveAsync"/> after it has finished with a completed record.
+/// the consumer calls <see cref="RemoveAsync"/> after it has finished with a completed record.</para>
+/// <para>Implementation guidance (ADR Decision 10): (a) make the attempt write reserve capacity comparable
+/// to the completed record (the polling URL carries a long token), so passing the pre-POST gate predicts
+/// the later update succeeding; (b) retry known-transient errors briefly before throwing (file sharing
+/// violations, SQL deadlocks/timeouts) — the library treats a <see cref="SaveTransactionAttemptAsync"/>
+/// throw as a gate refusal, so a throw should mean "store actually unavailable", not "one blip".</para>
 /// </remarks>
 public interface ISmartConnectTransactionState
 {

@@ -2,7 +2,9 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Xunit;
+using Yort.Eftpos.SmartConnect.Tests.Helpers;
 
 namespace Yort.Eftpos.SmartConnect.Tests;
 
@@ -142,5 +144,189 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 		await store.UpdateCompletedAsync(ref1, SmartConnectTransactionStatus.Declined);
 		await store.RemoveAsync(ref1);
 		Assert.Empty(await store.GetPendingTransactionsAsync());
+	}
+
+	// --- Task 6.6 (ADR Decision 10): pre-sized sentinel ---
+
+	private string FileFor(string clientTransactionRef)
+		=> Path.Combine(_directory, Uri.EscapeDataString(clientTransactionRef) + ".json");
+
+	private const int SharingViolation = unchecked((int)0x80070020);
+
+	[Fact]
+	public async Task Save_PadsSentinelToReservation()
+	{
+		// The gate's value is how well the sentinel write predicts the later update succeeding —
+		// it must claim the completed record's size class up front (disk-full protection).
+		var store = NewStore();
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+
+		Assert.True(new FileInfo(FileFor("ref-1")).Length >= FileBasedTransactionStateStore.ReservationBytes);
+	}
+
+	[Fact]
+	public async Task UpdatePollingDetails_LongUrl_DoesNotGrowFileBeyondInitialSize()
+	{
+		var store = NewStore();
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+		var initialSize = new FileInfo(FileFor("ref-1")).Length;
+
+		// ~2KB URL — well within the reservation; padding shrinks as real content grows.
+		var longUrl = "https://poll.example/transaction?merchantAccessToken=" + new string('a', 2048);
+		await store.UpdatePollingDetailsAsync("ref-1", longUrl, "txn-1");
+
+		Assert.True(new FileInfo(FileFor("ref-1")).Length <= initialSize);
+	}
+
+	[Fact]
+	public async Task Update_RecordExceedingReservation_SucceedsAndRoundTrips()
+	{
+		// (G8) Overflow grows the file and succeeds — prediction degrades, the operation never
+		// truncates or throws.
+		var store = NewStore();
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+
+		var hugeUrl = "https://poll.example/transaction?merchantAccessToken=" + new string('b', 8192);
+		await store.UpdatePollingDetailsAsync("ref-1", hugeUrl, "txn-1");
+
+		var record = Assert.Single(await store.GetPendingTransactionsAsync());
+		Assert.Equal(hugeUrl, record.PollingUrl);
+		Assert.True(new FileInfo(FileFor("ref-1")).Length > FileBasedTransactionStateStore.ReservationBytes);
+	}
+
+	[Fact]
+	public async Task Update_RecordExceedingReservation_LogsWarning()
+	{
+		var logger = new ListLogger();
+		var store = new FileBasedTransactionStateStore(_directory, logger);
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+
+		await store.UpdatePollingDetailsAsync("ref-1", "https://poll/?t=" + new string('c', 8192), "txn-1");
+
+		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("reservation"));
+	}
+
+	// --- Task 6.6 (G3): re-Save over an existing ref resets to a fresh pending sentinel ---
+
+	[Fact]
+	public async Task Save_OverCompletedRecord_ResetsToFreshPendingSentinel()
+	{
+		// Gate-refusal/NotSent retries reuse the same OTS ref — a re-tender must start clean.
+		var store = NewStore();
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+		await store.UpdatePollingDetailsAsync("ref-1", "https://poll/old", "txn-old");
+		await store.UpdateCompletedAsync("ref-1", SmartConnectTransactionStatus.Failed);
+
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 700);
+
+		var record = Assert.Single(await store.GetPendingTransactionsAsync());
+		Assert.Equal("ref-1", record.ClientTransactionRef);
+		Assert.Null(record.PollingUrl);
+		Assert.Null(record.TransactionId);
+	}
+
+	[Fact]
+	public async Task Save_OverTruncatedGarbageFile_ResetsToFreshPendingSentinel()
+	{
+		var store = NewStore();
+		File.WriteAllText(FileFor("ref-1"), "{ truncated garbage");
+
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+
+		var record = Assert.Single(await store.GetPendingTransactionsAsync());
+		Assert.Equal("ref-1", record.ClientTransactionRef);
+		Assert.Null(record.PollingUrl);
+	}
+
+	// --- Task 6.6 (G4/G5): transient retry wiring via the internal write seam ---
+
+	[Fact]
+	public async Task Save_TransientSharingViolationOnce_SucceedsViaRetry()
+	{
+		var store = NewStore();
+		store.RetryDelay = TimeSpan.Zero;
+		var attempts = 0;
+		store.WriteAllText = (path, contents) =>
+		{
+			attempts++;
+			if (attempts == 1)
+			{
+				throw new IOException("in use", SharingViolation);
+			}
+
+			File.WriteAllText(path, contents);
+		};
+
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+
+		Assert.Equal(2, attempts);
+		Assert.Single(await store.GetPendingTransactionsAsync());
+	}
+
+	[Fact]
+	public async Task Save_PersistentFailure_ThrowsAndLeavesNoPendingRecord()
+	{
+		// (G2) A refused gate must leave no phantom: write-temp-then-replace means a failed Save
+		// leaves at most an ignored .tmp, never a record GetPending reports as pending.
+		var store = NewStore();
+		store.RetryDelay = TimeSpan.Zero;
+		var attempts = 0;
+		store.WriteAllText = (path, contents) =>
+		{
+			attempts++;
+			throw new IOException("in use", SharingViolation);
+		};
+
+		await Assert.ThrowsAsync<IOException>(() => store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500));
+
+		Assert.Equal(3, attempts);
+		Assert.Empty(await store.GetPendingTransactionsAsync());
+	}
+
+	// --- Task 6.6 (G9/G10): logger behaviour ---
+
+	[Fact]
+	public async Task Save_RetryAttempt_LogsWarning()
+	{
+		// (G9) A store degrading toward the gate threshold must be visible before it refuses outright.
+		var logger = new ListLogger();
+		var store = new FileBasedTransactionStateStore(_directory, logger) { RetryDelay = TimeSpan.Zero };
+		var attempts = 0;
+		store.WriteAllText = (path, contents) =>
+		{
+			attempts++;
+			if (attempts == 1)
+			{
+				throw new IOException("in use", SharingViolation);
+			}
+
+			File.WriteAllText(path, contents);
+		};
+
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+
+		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+	}
+
+	[Fact]
+	public async Task Save_ThrowingLogger_DoesNotBreakOperation()
+	{
+		// (G10) Diagnostics must be strictly weaker than the path they diagnose.
+		var store = new FileBasedTransactionStateStore(_directory, new ThrowingLogger()) { RetryDelay = TimeSpan.Zero };
+		var attempts = 0;
+		store.WriteAllText = (path, contents) =>
+		{
+			attempts++;
+			if (attempts == 1)
+			{
+				throw new IOException("in use", SharingViolation);
+			}
+
+			File.WriteAllText(path, contents);
+		};
+
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+
+		Assert.Single(await store.GetPendingTransactionsAsync());
 	}
 }
