@@ -11,6 +11,12 @@ public sealed class SmartConnectTransactionResult
 	/// <summary>The terminal outcome. Always handle <see cref="SmartConnectTransactionStatus.Unknown"/> explicitly.</summary>
 	public SmartConnectTransactionStatus Status { get; init; } = SmartConnectTransactionStatus.Unknown;
 
+	/// <summary>
+	/// Why the transaction did not complete normally (ADR Decision 9). <see cref="SmartConnectFailureCause.None"/>
+	/// for normal outcomes including Declined; see the enum values for retry guidance.
+	/// </summary>
+	public SmartConnectFailureCause FailureCause { get; init; } = SmartConnectFailureCause.None;
+
 	/// <summary>The server-issued transaction id.</summary>
 	public string? TransactionId { get; init; }
 

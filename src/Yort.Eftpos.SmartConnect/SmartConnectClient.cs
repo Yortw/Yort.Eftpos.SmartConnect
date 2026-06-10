@@ -6,6 +6,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Yort.Eftpos.SmartConnect.Internal;
 
 namespace Yort.Eftpos.SmartConnect;
@@ -130,6 +131,220 @@ public sealed class SmartConnectClient : IDisposable
 					ErrorMessage = GetErrorMessage(response, body)
 				};
 			}
+		}
+	}
+
+	/// <summary>
+	/// Processes a transaction: persists the recovery sentinel, POSTs to <c>/Transaction</c>, records the
+	/// polling details, then polls to a terminal outcome. Never throws for runtime conditions (ADR
+	/// Decision 9) — all operational failures surface as a result; check
+	/// <see cref="SmartConnectTransactionResult.Status"/> and <see cref="SmartConnectTransactionResult.FailureCause"/>.
+	/// Always handle <see cref="SmartConnectTransactionStatus.Unknown"/> explicitly.
+	/// </summary>
+	/// <param name="request">The transaction to process. <c>ClientTransactionRef</c> must be stable across a
+	/// restart for the same logical transaction — it is the crash-recovery key.</param>
+	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
+	/// <exception cref="ArgumentException">A mandatory field is blank, or the total amount is not positive.</exception>
+	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
+	public async Task<SmartConnectTransactionResult> ProcessTransactionAsync(SmartConnectTransactionRequest request)
+	{
+		ValidateTransactionRequest(request);
+
+		// (F5/R3) The absolute pre-POST gate: if the sentinel cannot be persisted, nothing is sent. The
+		// refusal is a result, not an escaping store exception type (ADR Decisions 9/10).
+		try
+		{
+			await _config.StateStore!.SaveTransactionAttemptAsync(request.ClientTransactionRef, request.TransactionType, request.AmountTotal.ToCents()).ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			SafeLog(LogLevel.Error, ex, $"State store refused the pre-POST sentinel write for '{request.ClientTransactionRef}' — transaction NOT sent. EFTPOS is unavailable at this register until the store recovers.");
+			return new SmartConnectTransactionResult
+			{
+				Status = SmartConnectTransactionStatus.Failed,
+				FailureCause = SmartConnectFailureCause.StateStoreFailure
+			};
+		}
+
+		HttpResponseMessage response;
+		try
+		{
+			response = await PostTransactionAsync(request).ConfigureAwait(false);
+		}
+		catch (SmartConnectTransportException ex) when (ex.Delivery == SmartConnectRequestDelivery.NotSent)
+		{
+			// Provably never reached the service — close the sentinel; the caller may retry freely.
+			SafeLog(LogLevel.Warning, ex, $"Transaction POST never reached SmartConnect ({ex.InnerException?.GetType().Name}) for '{request.ClientTransactionRef}' — nothing was sent; safe to retry.");
+			await CloseSentinelQuietlyAsync(request.ClientTransactionRef, SmartConnectTransactionStatus.Failed).ConfigureAwait(false);
+			return new SmartConnectTransactionResult
+			{
+				Status = SmartConnectTransactionStatus.Failed,
+				FailureCause = SmartConnectFailureCause.TransportNotSent
+			};
+		}
+		catch (SmartConnectTransportException ex)
+		{
+			// Outcome unknown — the POST may have been processed. The sentinel MUST stay pending so
+			// recovery investigates; closing it would hide a possibly-live charge.
+			SafeLog(LogLevel.Error, ex, $"Transaction POST outcome is UNKNOWN ({ex.InnerException?.GetType().Name}) for '{request.ClientTransactionRef}' — the transaction may have been processed; recovery must investigate. Distinct from poll exhaustion: no response was ever received.");
+			return new SmartConnectTransactionResult
+			{
+				Status = SmartConnectTransactionStatus.Unknown,
+				FailureCause = SmartConnectFailureCause.TransportUnknown
+			};
+		}
+
+		using (response)
+		{
+			var body = response.Content == null
+				? string.Empty
+				: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+			if (!response.IsSuccessStatusCode)
+			{
+				// The service answered and rejected it — terminal; fix the request/config, blind retry
+				// will fail again.
+				SafeLog(LogLevel.Error, null, $"SmartConnect rejected the transaction POST for '{request.ClientTransactionRef}': {GetErrorMessage(response, body)}");
+				await CloseSentinelQuietlyAsync(request.ClientTransactionRef, SmartConnectTransactionStatus.Failed).ConfigureAwait(false);
+				return new SmartConnectTransactionResult
+				{
+					Status = SmartConnectTransactionStatus.Failed,
+					FailureCause = SmartConnectFailureCause.ServiceError
+				};
+			}
+
+			InitialTransactionResponse initial;
+			try
+			{
+				initial = TransactionResponseParser.ParseInitialResponse(body);
+			}
+			catch (JsonException)
+			{
+				initial = new InitialTransactionResponse();
+			}
+
+			if (string.IsNullOrEmpty(initial.PollingUrl))
+			{
+				// 200 but unusable — the transaction may be live on the pinpad with no way to poll it.
+				// Outcome unknown, sentinel stays pending for recovery (F10).
+				SafeLog(LogLevel.Error, null, $"SmartConnect accepted the transaction POST for '{request.ClientTransactionRef}' but returned no polling URL — outcome is UNKNOWN; recovery must investigate.");
+				return new SmartConnectTransactionResult
+				{
+					Status = SmartConnectTransactionStatus.Unknown,
+					FailureCause = SmartConnectFailureCause.TransportUnknown,
+					TransactionId = initial.TransactionId
+				};
+			}
+
+			try
+			{
+				await _config.StateStore!.UpdatePollingDetailsAsync(request.ClientTransactionRef, initial.PollingUrl!, initial.TransactionId ?? string.Empty).ConfigureAwait(false);
+			}
+			catch (Exception ex)
+			{
+				// (R3) Best-effort happy path: the transaction is irrevocably in flight (no cancel API)
+				// and most likely completes normally — continue on the in-memory URL. (G7) The URL was an
+				// argument to the failing call and store exceptions commonly echo arguments: log the
+				// exception TYPE only, never its message.
+				SafeLog(LogLevel.Error, null, $"Failed to persist polling details ({ex.GetType().Name}) for '{request.ClientTransactionRef}' — continuing on the in-memory URL. Crash recovery for this transaction is degraded: manual verification may be needed if the POS terminates before completion.");
+			}
+
+			return await PollForResultAsync(initial.PollingUrl!, initial.TransactionId).ConfigureAwait(false);
+		}
+	}
+
+	// Task 8 replaces this stub with the real polling loop (interval, MaxPollDuration, 429 backoff,
+	// IProgress status, F8 PollingUrlInvalid classification).
+	private Task<SmartConnectTransactionResult> PollForResultAsync(string pollingUrl, string? transactionId)
+	{
+		return Task.FromResult(new SmartConnectTransactionResult
+		{
+			Status = SmartConnectTransactionStatus.Unknown,
+			TransactionId = transactionId
+		});
+	}
+
+	private async Task<HttpResponseMessage> PostTransactionAsync(SmartConnectTransactionRequest request)
+	{
+		var fields = new List<KeyValuePair<string, string?>>(8)
+		{
+			new KeyValuePair<string, string?>("POSRegisterID", request.POSRegisterID),
+			new KeyValuePair<string, string?>("POSBusinessName", request.POSBusinessName),
+			new KeyValuePair<string, string?>("POSVendorName", request.POSVendorName),
+			new KeyValuePair<string, string?>("TransactionMode", "ASYNC"),
+			new KeyValuePair<string, string?>("TransactionType", request.TransactionType),
+			new KeyValuePair<string, string?>("AmountTotal", request.AmountTotal.ToCents().ToString(System.Globalization.CultureInfo.InvariantCulture))
+		};
+
+		if (string.Equals(request.TransactionType, SmartConnectTransactionType.CardPurchasePlusCash, StringComparison.Ordinal))
+		{
+			fields.Add(new KeyValuePair<string, string?>("AmountCash", request.AmountCash.ToCents().ToString(System.Globalization.CultureInfo.InvariantCulture)));
+		}
+
+		if (!string.IsNullOrEmpty(request.TransactionReference))
+		{
+			fields.Add(new KeyValuePair<string, string?>("TransactionReference", request.TransactionReference));
+		}
+
+		using (var httpRequest = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/Transaction"))
+		{
+			httpRequest.Content = new StringContent(FormUrlEncoder.Encode(fields), Encoding.UTF8, "application/x-www-form-urlencoded");
+			return await SendAsync(httpRequest).ConfigureAwait(false);
+		}
+	}
+
+	private void ValidateTransactionRequest(SmartConnectTransactionRequest request)
+	{
+		if (request == null)
+		{
+			throw new ArgumentNullException(nameof(request));
+		}
+
+		RequireField(request.ClientTransactionRef, nameof(request.ClientTransactionRef));
+		RequireField(request.POSRegisterID, nameof(request.POSRegisterID));
+		RequireField(request.POSBusinessName, nameof(request.POSBusinessName));
+		RequireField(request.POSVendorName, nameof(request.POSVendorName));
+		RequireField(request.TransactionType, nameof(request.TransactionType));
+
+		if (request.AmountTotal.ToCents() <= 0)
+		{
+			throw new ArgumentException("AmountTotal must be positive (refunds are positive amounts with TransactionType Card.Refund).", "request");
+		}
+
+		ThrowIfDisposed();
+	}
+
+	// (R3) Closes the sentinel after an outcome the library already holds; a persistence failure must
+	// never mask that outcome — log and continue.
+	private async Task CloseSentinelQuietlyAsync(string clientTransactionRef, SmartConnectTransactionStatus status)
+	{
+		try
+		{
+			await _config.StateStore!.UpdateCompletedAsync(clientTransactionRef, status).ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			SafeLog(LogLevel.Warning, null, $"Failed to persist terminal state ({ex.GetType().Name}) for '{clientTransactionRef}' — the outcome was still returned; the sentinel stays pending for recovery to investigate.");
+		}
+	}
+
+	// (G10) Diagnostics must be strictly weaker than the path they diagnose — a logger failure never
+	// fails the operation being logged.
+	private void SafeLog(LogLevel level, Exception? exception, string message)
+	{
+		var logger = _config.Logger;
+		if (logger == null)
+		{
+			return;
+		}
+
+		try
+		{
+			logger.Log(level, 0, message, exception, (state, _) => state);
+		}
+		catch
+		{
+			// Suppressed by design.
 		}
 	}
 
