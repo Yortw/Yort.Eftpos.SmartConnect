@@ -276,6 +276,12 @@ public sealed class SmartConnectClient : IDisposable
 		var startedAt = Clock();
 		var deadline = startedAt + _config.MaxPollDuration;
 
+		// 429 backoff state: the exponential doubles from the configured interval per consecutive 429
+		// (capped at BackoffCap) and resets on any successful poll; a Retry-After header overrides the
+		// exponential for that wait without disturbing it.
+		var nextDelay = _config.PollInterval;
+		var backoffInterval = _config.PollInterval;
+
 		while (true)
 		{
 			if (_disposed || Clock() >= deadline)
@@ -292,13 +298,23 @@ public sealed class SmartConnectClient : IDisposable
 				};
 			}
 
-			await PollDelay(_config.PollInterval).ConfigureAwait(false);
+			await PollDelay(nextDelay).ConfigureAwait(false);
+			nextDelay = _config.PollInterval;
 
 			try
 			{
 				using (var pollRequest = new HttpRequestMessage(HttpMethod.Get, pollingUrl))
 				using (var response = await SendAsync(pollRequest).ConfigureAwait(false))
 				{
+					if ((int)response.StatusCode == 429)
+					{
+						backoffInterval = Min(TimeSpan.FromTicks(backoffInterval.Ticks * 2), _config.BackoffCap);
+						nextDelay = GetRetryAfterDelay(response) ?? backoffInterval;
+						SafeLog(LogLevel.Debug, null, $"Rate-limited (HTTP 429) for '{clientTransactionRef}' — backing off; next poll in {nextDelay.TotalSeconds:0}s.");
+						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.BackingOff });
+						continue;
+					}
+
 					if (IsPollingUrlVerdict(response.StatusCode))
 					{
 						// (F8) An ANSWER saying the URL itself is no good — spinning NetworkError to
@@ -315,8 +331,7 @@ public sealed class SmartConnectClient : IDisposable
 
 					if (!response.IsSuccessStatusCode)
 					{
-						// 429/5xx are transient — keep polling within MaxPollDuration. Task 9 adds
-						// Retry-After-aware backoff for 429.
+						// 5xx is transient — keep polling within MaxPollDuration (429 is handled above).
 						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
 						continue;
 					}
@@ -336,6 +351,9 @@ public sealed class SmartConnectClient : IDisposable
 						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
 						continue;
 					}
+
+					// A successful poll resets the 429 backoff to the configured interval.
+					backoffInterval = _config.PollInterval;
 
 					if (poll.Progress == PollProgress.Completed)
 					{
@@ -370,6 +388,41 @@ public sealed class SmartConnectClient : IDisposable
 			|| statusCode == HttpStatusCode.NotFound
 			|| statusCode == HttpStatusCode.Gone;
 	}
+
+	// Honours Retry-After (delta-seconds or HTTP-date) clamped into [MinimumPollInterval, BackoffCap]: a
+	// past/zero value must never cause an immediate re-poll (the violation 429 is telling us off for), and
+	// a huge vendor value never out-waits our patience ceiling — MaxPollDuration stays the true bound.
+	private TimeSpan? GetRetryAfterDelay(HttpResponseMessage response)
+	{
+		var retryAfter = response.Headers.RetryAfter;
+		if (retryAfter == null)
+		{
+			return null;
+		}
+
+		TimeSpan value;
+		if (retryAfter.Delta != null)
+		{
+			value = retryAfter.Delta.Value;
+		}
+		else if (retryAfter.Date != null)
+		{
+			value = retryAfter.Date.Value - Clock();
+		}
+		else
+		{
+			return null;
+		}
+
+		if (value < SmartConnectClientConfiguration.MinimumPollInterval)
+		{
+			return SmartConnectClientConfiguration.MinimumPollInterval;
+		}
+
+		return value > _config.BackoffCap ? _config.BackoffCap : value;
+	}
+
+	private static TimeSpan Min(TimeSpan left, TimeSpan right) => left < right ? left : right;
 
 	private async Task<HttpResponseMessage> PostTransactionAsync(SmartConnectTransactionRequest request)
 	{
