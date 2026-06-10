@@ -200,7 +200,7 @@ internal static class Program
 		for (var i = 0; i < pending.Count; i++)
 		{
 			// (H6) The polling URL carries a bearer token — display it REDACTED, the way integrators should.
-			Console.WriteLine($" {i + 1}) {pending[i].ClientTransactionRef}  created {pending[i].CreatedAt:u}  url {RedactUrl(pending[i].PollingUrl)}");
+			Console.WriteLine($" {i + 1}) {pending[i].ClientTransactionRef}  created {pending[i].CreatedAt:u}  url {RedactToken(pending[i].PollingUrl)}");
 		}
 
 		Console.Write("Resume which (number, blank to cancel)? ");
@@ -257,8 +257,8 @@ internal static class Program
 		{
 			var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 			Console.WriteLine($"HTTP {(int)response.StatusCode}");
-			Console.WriteLine(RedactUrl(body));
-			Transcript($"JOURNAL-PROBE posRef={(includePosReferenceId ? "yes" : "no")} http={(int)response.StatusCode} body={RedactUrl(body)}");
+			Console.WriteLine(RedactToken(body));
+			Transcript($"JOURNAL-PROBE posRef={(includePosReferenceId ? "yes" : "no")} http={(int)response.StatusCode} body={RedactToken(body)}");
 			Console.WriteLine("Record the verdict (works at all? honours POSReferenceID?) in the ADR open-questions table.");
 		}
 	}
@@ -392,7 +392,7 @@ internal static class Program
 			Console.WriteLine("---------------");
 		}
 
-		Transcript($"NONFIN {operation} status={result.Status} cause={result.FailureCause} txnId={result.TransactionId} raw={RedactUrl(RawDataLine(result))}");
+		Transcript($"NONFIN {operation} status={result.Status} cause={result.FailureCause} txnId={result.TransactionId} raw={RedactToken(RawDataLine(result))}");
 		Console.WriteLine("Record the response-shape verdict (raw fields above) in the ADR open-questions table.");
 	}
 
@@ -407,7 +407,7 @@ internal static class Program
 		Console.WriteLine("raw response fields:");
 		foreach (var pair in result.RawData)
 		{
-			Console.WriteLine($"  {pair.Key} = {RedactUrl(pair.Value)}");
+			Console.WriteLine($"  {pair.Key} = {RedactToken(pair.Value)}");
 		}
 	}
 
@@ -442,23 +442,52 @@ internal static class Program
 		return Money.FromDecimal(amount);
 	}
 
-	/// <summary>Masks the bearer token in a polling URL (or any text containing one) for display/transcript.</summary>
-	private static string RedactUrl(string? text)
+	/// <summary>
+	/// Masks the bearer token for display/transcript in BOTH the forms it appears: as a URL query parameter
+	/// (<c>merchantAccessToken=...</c>) and as its own JSON field (<c>"merchantAccessToken": "..."</c> at the
+	/// response root). Display-only — persisted state always keeps the full URL, or recovery would break.
+	/// </summary>
+	private static string RedactToken(string? text)
 	{
 		if (string.IsNullOrEmpty(text))
 		{
 			return "(none)";
 		}
 
-		const string marker = "merchantAccessToken=";
+		const string name = "merchantAccessToken";
 		var output = text!;
-		int index;
 		var searchFrom = 0;
-		while ((index = output.IndexOf(marker, searchFrom, StringComparison.OrdinalIgnoreCase)) >= 0)
+		int index;
+		while ((index = output.IndexOf(name, searchFrom, StringComparison.OrdinalIgnoreCase)) >= 0)
 		{
-			var valueStart = index + marker.Length;
+			var i = index + name.Length;
+			while (i < output.Length && (output[i] == '"' || char.IsWhiteSpace(output[i])))
+			{
+				i++;
+			}
+
+			if (i >= output.Length || (output[i] != '=' && output[i] != ':'))
+			{
+				searchFrom = index + name.Length;
+				continue;
+			}
+
+			i++;
+			while (i < output.Length && char.IsWhiteSpace(output[i]))
+			{
+				i++;
+			}
+
+			var quoted = i < output.Length && output[i] == '"';
+			if (quoted)
+			{
+				i++;
+			}
+
+			var valueStart = i;
 			var valueEnd = valueStart;
-			while (valueEnd < output.Length && output[valueEnd] != '&' && output[valueEnd] != '"' && !char.IsWhiteSpace(output[valueEnd]))
+			while (valueEnd < output.Length
+				&& (quoted ? output[valueEnd] != '"' : output[valueEnd] != '&' && output[valueEnd] != '"' && !char.IsWhiteSpace(output[valueEnd])))
 			{
 				valueEnd++;
 			}
