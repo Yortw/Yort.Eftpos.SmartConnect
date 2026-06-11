@@ -81,6 +81,7 @@ internal static class Program
 			Console.WriteLine("10) Terminal status (is the cloud able to reach the pinpad?)");
 			Console.WriteLine("11) Settlement inquiry (read-only)");
 			Console.WriteLine("12) Settlement CUTOVER (state-changing!)");
+			Console.WriteLine("13) Journal.GetTransResult GUIDED investigation (Decision 10 verdict)");
 			Console.WriteLine(" 0) Quit");
 			Console.Write("> ");
 
@@ -101,6 +102,7 @@ internal static class Program
 					case "10": RenderNonFinancial("Terminal.GetStatus", await client.GetTerminalStatusAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
 					case "11": RenderNonFinancial("Acquirer.Settlement.Inquiry", await client.SettlementInquiryAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
 					case "12": await CutoverAsync(client).ConfigureAwait(false); break;
+					case "13": await GuidedJournalInvestigationAsync(client).ConfigureAwait(false); break;
 					case "0": return;
 				}
 			}
@@ -260,6 +262,262 @@ internal static class Program
 			Console.WriteLine(RedactToken(body));
 			Transcript($"JOURNAL-PROBE posRef={(includePosReferenceId ? "yes" : "no")} http={(int)response.StatusCode} body={RedactToken(body)}");
 			Console.WriteLine("Record the verdict (works at all? honours POSReferenceID?) in the ADR open-questions table.");
+		}
+	}
+
+	// (Decision 10) Guided dedicated investigation. The single-shot probes (6/7) printed only the INITIAL
+	// journal response — but Journal.GetTransResult uses the same async envelope, so that body is just
+	// PENDING + a PollingUrl, which is why it looked uninterpretable. This flow (a) anchors on a known
+	// purchase, (b) bare-queries the journal and POLLS ITS URL TO A TERMINAL STATE, (c) diffs the journal's
+	// transaction against the anchor (same id? fields echoed?), and (d) optionally tests whether the
+	// undocumented POSReferenceID field targets a specific (older) transaction. Captures every raw body.
+	private static async Task GuidedJournalInvestigationAsync(SmartConnectClient client)
+	{
+		Console.WriteLine();
+		Console.WriteLine("GUIDED Journal.GetTransResult investigation (Decision 10).");
+		Console.WriteLine("Runs a REAL anchor purchase, then journal-queries it (polled to a terminal state) and diffs.");
+		Console.Write("Proceed? (y/N): ");
+		if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+		{
+			return;
+		}
+
+		var amount = PromptAmount("Anchor purchase amount (e.g. 1.00): ");
+		if (amount == null)
+		{
+			return;
+		}
+
+		var anchorRef = "journal-anchor-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+		Transcript($"JOURNAL-INV anchor send ref={anchorRef} total={amount.Value.ToCents()}c");
+		var anchor = await client.ProcessTransactionAsync(new SmartConnectTransactionRequest
+		{
+			TransactionType = SmartConnectTransactionType.CardPurchase,
+			AmountTotal = amount.Value,
+			POSRegisterID = _settings.RegisterId!,
+			POSBusinessName = _settings.BusinessName!,
+			POSVendorName = _settings.VendorName!,
+			ClientTransactionRef = anchorRef
+		}, new ConsoleProgress()).ConfigureAwait(false);
+		RenderResult(anchor, anchorRef);
+
+		if (anchor.Status != SmartConnectTransactionStatus.Accepted && anchor.Status != SmartConnectTransactionStatus.Declined)
+		{
+			Console.WriteLine("Anchor did not reach a clean Accepted/Declined outcome — the investigation needs a known");
+			Console.WriteLine("result to diff against. Aborting; retry when the terminal is ready.");
+			return;
+		}
+
+		Console.WriteLine();
+		Console.WriteLine("--- Bare Journal.GetTransResult (polled to terminal) ---");
+		var bare = await RawJournalQueryAsync(null).ConfigureAwait(false);
+		PrintJournalCapture("bare", bare);
+		CompareToAnchor(anchor, bare);
+
+		Console.WriteLine();
+		Console.WriteLine("POSReferenceID targeting test needs a transaction OLDER than the anchor.");
+		Console.Write("Enter an older transactionId (from a previous run/transcript), or blank to skip: ");
+		var olderId = Console.ReadLine()?.Trim();
+		if (!string.IsNullOrWhiteSpace(olderId))
+		{
+			Console.WriteLine();
+			Console.WriteLine($"--- Journal.GetTransResult with POSReferenceID={olderId} (polled to terminal) ---");
+			var targeted = await RawJournalQueryAsync(olderId).ConfigureAwait(false);
+			PrintJournalCapture("targeted", targeted);
+
+			var verdict = string.Equals(targeted.TransactionId, olderId, StringComparison.OrdinalIgnoreCase)
+				? "returned the REQUESTED older id — POSReferenceID appears to TARGET a specific transaction."
+				: string.Equals(targeted.TransactionId, anchor.TransactionId, StringComparison.OrdinalIgnoreCase)
+					? "returned the ANCHOR (latest) id, not the requested one — POSReferenceID appears IGNORED."
+					: "returned a DIFFERENT id than both — inspect the raw body above.";
+			Console.WriteLine("VERDICT (targeting): " + verdict);
+			Transcript($"JOURNAL-INV targeting requested={olderId} returned={targeted.TransactionId} anchor={anchor.TransactionId} :: {verdict}");
+		}
+
+		Console.WriteLine();
+		Console.WriteLine("Record in the ADR open-questions table (Decision 10):");
+		Console.WriteLine("  - bare GetTransResult returns the just-completed (last) transaction, polled to terminal? (see VERDICT above)");
+		Console.WriteLine("  - its fields (txn id / auth / amount) echo that transaction? (see field diff above)");
+		Console.WriteLine("  - POSReferenceID targets a specific transaction, or is ignored? (see targeting VERDICT)");
+	}
+
+	// Raw (NOT via the library) so we can inject the undocumented POSReferenceID and see the unparsed
+	// envelope. Crucially polls the journal's own PollingUrl to a terminal state — the step the first probes
+	// skipped.
+	private static async Task<JournalCapture> RawJournalQueryAsync(string? posReferenceId)
+	{
+		var fields = new List<KeyValuePair<string, string>>
+		{
+			new KeyValuePair<string, string>("POSRegisterID", _settings.RegisterId!),
+			new KeyValuePair<string, string>("POSBusinessName", _settings.BusinessName!),
+			new KeyValuePair<string, string>("POSVendorName", _settings.VendorName!),
+			new KeyValuePair<string, string>("TransactionMode", "ASYNC"),
+			new KeyValuePair<string, string>("TransactionType", "Journal.GetTransResult")
+		};
+
+		if (!string.IsNullOrWhiteSpace(posReferenceId))
+		{
+			fields.Add(new KeyValuePair<string, string>("POSReferenceID", posReferenceId!));
+		}
+
+		var capture = new JournalCapture();
+		using (var http = new HttpClient())
+		{
+			string body;
+			using (var content = new FormUrlEncodedContent(fields))
+			using (var response = await http.PostAsync(_settings.BaseUrl!.TrimEnd('/') + "/Transaction", content).ConfigureAwait(false))
+			{
+				capture.InitialHttpStatus = (int)response.StatusCode;
+				body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+			}
+
+			Transcript($"JOURNAL-INV post posRef={posReferenceId ?? "(none)"} http={capture.InitialHttpStatus} body={RedactToken(body)}");
+			var envelope = ParseEnvelope(body);
+			capture.Apply(body, envelope);
+
+			// Poll the journal's own URL to a terminal state (>= 2s per poll to avoid 429), capped.
+			var polls = 0;
+			while (!string.Equals(envelope.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase)
+				&& !string.IsNullOrEmpty(envelope.PollingUrl)
+				&& polls < 8)
+			{
+				await Task.Delay(TimeSpan.FromSeconds(2.5)).ConfigureAwait(false);
+				polls++;
+				using (var pollResponse = await http.GetAsync(envelope.PollingUrl).ConfigureAwait(false))
+				{
+					body = await pollResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+				}
+
+				envelope = ParseEnvelope(body);
+				capture.Apply(body, envelope);
+				Transcript($"JOURNAL-INV poll #{polls} status={envelope.Status} body={RedactToken(body)}");
+			}
+
+			capture.PollCount = polls;
+		}
+
+		return capture;
+	}
+
+	private static Envelope ParseEnvelope(string body)
+	{
+		var data = new Dictionary<string, string>();
+		string? transactionId = null;
+		string? status = null;
+		string? pollingUrl = null;
+
+		try
+		{
+			using (var document = JsonDocument.Parse(body))
+			{
+				var root = document.RootElement;
+				if (root.ValueKind == JsonValueKind.Object)
+				{
+					if (root.TryGetProperty("transactionId", out var id) && id.ValueKind == JsonValueKind.String)
+					{
+						transactionId = id.GetString();
+					}
+
+					if (root.TryGetProperty("transactionStatus", out var s) && s.ValueKind == JsonValueKind.String)
+					{
+						status = s.GetString();
+					}
+
+					if (root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object)
+					{
+						foreach (var property in d.EnumerateObject())
+						{
+							data[property.Name] = property.Value.ValueKind == JsonValueKind.String
+								? (property.Value.GetString() ?? string.Empty)
+								: property.Value.GetRawText();
+						}
+
+						if (d.TryGetProperty("PollingUrl", out var url) && url.ValueKind == JsonValueKind.String)
+						{
+							pollingUrl = url.GetString();
+						}
+					}
+				}
+			}
+		}
+		catch (JsonException)
+		{
+			// Unparseable — caller still has the raw body to print.
+		}
+
+		return new Envelope { TransactionId = transactionId, Status = status, PollingUrl = pollingUrl, Data = data };
+	}
+
+	private static void PrintJournalCapture(string label, JournalCapture capture)
+	{
+		Console.WriteLine($"[{label}] initial HTTP {capture.InitialHttpStatus}, polled {capture.PollCount}x, final status {capture.FinalStatus ?? "(none)"}, txnId {capture.TransactionId ?? "(none)"}");
+		if (capture.Data.Count == 0)
+		{
+			Console.WriteLine("  (no parsed data; raw body:)");
+			Console.WriteLine("  " + RedactToken(capture.RawFinalBody));
+			return;
+		}
+
+		Console.WriteLine("  journal data fields:");
+		foreach (var pair in capture.Data)
+		{
+			Console.WriteLine($"    {pair.Key} = {RedactToken(pair.Value)}");
+		}
+	}
+
+	private static void CompareToAnchor(SmartConnectTransactionResult anchor, JournalCapture journal)
+	{
+		var sameTransaction = !string.IsNullOrEmpty(anchor.TransactionId)
+			&& string.Equals(anchor.TransactionId, journal.TransactionId, StringComparison.OrdinalIgnoreCase);
+
+		Console.WriteLine();
+		Console.WriteLine($"VERDICT (bare): journal txnId {(sameTransaction ? "MATCHES" : "does NOT match")} the anchor purchase "
+			+ $"({anchor.TransactionId ?? "(none)"} vs {journal.TransactionId ?? "(none)"}).");
+		Console.WriteLine(sameTransaction
+			? "  => bare Journal.GetTransResult returns the just-completed (last) transaction."
+			: "  => bare Journal.GetTransResult did NOT return the just-completed transaction (see raw body).");
+
+		CompareField("AuthId", anchor.AuthId, journal, "AuthId");
+		CompareField("AmountTotal(cents)", anchor.AmountTotal.ToCents().ToString(), journal, "AmountTotal");
+		CompareField("CardPan", anchor.CardPan, journal, "CardPan");
+		Transcript($"JOURNAL-INV compare anchorTxnId={anchor.TransactionId} journalTxnId={journal.TransactionId} sameTxn={sameTransaction}");
+	}
+
+	private static void CompareField(string label, string? anchorValue, JournalCapture journal, string journalKey)
+	{
+		if (string.IsNullOrEmpty(anchorValue))
+		{
+			return;
+		}
+
+		journal.Data.TryGetValue(journalKey, out var journalValue);
+		var echoed = string.Equals(anchorValue, journalValue, StringComparison.OrdinalIgnoreCase);
+		Console.WriteLine($"    {label}: anchor='{anchorValue}' journal='{journalValue ?? "(absent)"}' -> {(echoed ? "ECHOED" : "different/absent")}");
+	}
+
+	private sealed class Envelope
+	{
+		public string? TransactionId { get; set; }
+		public string? Status { get; set; }
+		public string? PollingUrl { get; set; }
+		public IReadOnlyDictionary<string, string> Data { get; set; } = new Dictionary<string, string>();
+	}
+
+	private sealed class JournalCapture
+	{
+		public int InitialHttpStatus { get; set; }
+		public int PollCount { get; set; }
+		public string? TransactionId { get; set; }
+		public string? FinalStatus { get; set; }
+		public string RawFinalBody { get; set; } = string.Empty;
+		public IReadOnlyDictionary<string, string> Data { get; set; } = new Dictionary<string, string>();
+
+		public void Apply(string rawBody, Envelope envelope)
+		{
+			RawFinalBody = rawBody;
+			TransactionId = envelope.TransactionId ?? TransactionId;
+			FinalStatus = envelope.Status;
+			Data = envelope.Data;
 		}
 	}
 
