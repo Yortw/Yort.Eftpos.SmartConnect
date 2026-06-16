@@ -74,14 +74,12 @@ internal static class Program
 			Console.WriteLine(" 3) Refund");
 			Console.WriteLine(" 4) Purchase + cash-out   (F9 probe: amount-relationship verdict)");
 			Console.WriteLine(" 5) List pending / resume (PollingUrl lifetime / F8 probe)");
-			Console.WriteLine(" 6) Journal.GetTransResult probe — bare        (Decision 10)");
-			Console.WriteLine(" 7) Journal.GetTransResult probe — with POSReferenceID (Decision 10)");
+			Console.WriteLine(" 6) Journal.GetTransResult — last transaction (Decision 10)");
 			Console.WriteLine(" 8) Re-pair with same register id (idempotency probe)");
 			Console.WriteLine(" 9) Transport-shape probe (no pinpad needed; run on BOTH TFMs — R4)");
 			Console.WriteLine("10) Terminal status (is the cloud able to reach the pinpad?)");
 			Console.WriteLine("11) Settlement inquiry (read-only)");
 			Console.WriteLine("12) Settlement CUTOVER (state-changing!)");
-			Console.WriteLine("13) Journal.GetTransResult GUIDED investigation (Decision 10 verdict)");
 			Console.WriteLine(" 0) Quit");
 			Console.Write("> ");
 
@@ -95,14 +93,12 @@ internal static class Program
 					case "3": await TransactAsync(client, SmartConnectTransactionType.CardRefund).ConfigureAwait(false); break;
 					case "4": await TransactAsync(client, SmartConnectTransactionType.CardPurchasePlusCash).ConfigureAwait(false); break;
 					case "5": await ListAndResumeAsync(client, store).ConfigureAwait(false); break;
-					case "6": await JournalProbeAsync(includePosReferenceId: false).ConfigureAwait(false); break;
-					case "7": await JournalProbeAsync(includePosReferenceId: true).ConfigureAwait(false); break;
+					case "6": await JournalQueryAsync(client).ConfigureAwait(false); break;
 					case "8": await PairAsync(client).ConfigureAwait(false); break;
 					case "9": await TransportShapeProbeAsync().ConfigureAwait(false); break;
 					case "10": RenderNonFinancial("Terminal.GetStatus", await client.GetTerminalStatusAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
 					case "11": RenderNonFinancial("Acquirer.Settlement.Inquiry", await client.SettlementInquiryAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
 					case "12": await CutoverAsync(client).ConfigureAwait(false); break;
-					case "13": await GuidedJournalInvestigationAsync(client).ConfigureAwait(false); break;
 					case "0": return;
 				}
 			}
@@ -228,320 +224,14 @@ internal static class Program
 		}
 	}
 
-	// Raw protocol probe — deliberately NOT via the library: it injects the legacy SmartPay field
-	// POSReferenceID, which SmartConnect does not document, to answer the Decision-10 open question.
-	private static async Task JournalProbeAsync(bool includePosReferenceId)
+	// Exercises the library's Layer-2 recovery query (Journal.GetTransResult): fetches the terminal's most-
+	// recent transaction. DEVICE-scoped, not register-scoped (Decision 10) — on a terminal shared by several
+	// registers this can return another register's transaction, so a real recovery must confirm the reported
+	// transaction matches its sentinel (ReferenceId / AmountTotal) before adopting it.
+	private static async Task JournalQueryAsync(SmartConnectClient client)
 	{
-		var fields = new List<KeyValuePair<string, string>>
-		{
-			new KeyValuePair<string, string>("POSRegisterID", _settings.RegisterId!),
-			new KeyValuePair<string, string>("POSBusinessName", _settings.BusinessName!),
-			new KeyValuePair<string, string>("POSVendorName", _settings.VendorName!),
-			new KeyValuePair<string, string>("TransactionMode", "ASYNC"),
-			new KeyValuePair<string, string>("TransactionType", "Journal.GetTransResult")
-		};
-
-		if (includePosReferenceId)
-		{
-			Console.Write("POSReferenceID to query (a previous demo ref): ");
-			var posRef = Console.ReadLine()?.Trim();
-			if (string.IsNullOrWhiteSpace(posRef))
-			{
-				return;
-			}
-
-			fields.Add(new KeyValuePair<string, string>("POSReferenceID", posRef!));
-		}
-
-		using (var http = new HttpClient())
-		using (var content = new FormUrlEncodedContent(fields))
-		using (var response = await http.PostAsync(_settings.BaseUrl!.TrimEnd('/') + "/Transaction", content).ConfigureAwait(false))
-		{
-			var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-			Console.WriteLine($"HTTP {(int)response.StatusCode}");
-			Console.WriteLine(RedactToken(body));
-			Transcript($"JOURNAL-PROBE posRef={(includePosReferenceId ? "yes" : "no")} http={(int)response.StatusCode} body={RedactToken(body)}");
-			Console.WriteLine("Record the verdict (works at all? honours POSReferenceID?) in the ADR open-questions table.");
-		}
-	}
-
-	// (Decision 10) Guided dedicated investigation. The single-shot probes (6/7) printed only the INITIAL
-	// journal response — but Journal.GetTransResult uses the same async envelope, so that body is just
-	// PENDING + a PollingUrl, which is why it looked uninterpretable. This flow (a) anchors on a known
-	// purchase, (b) bare-queries the journal and POLLS ITS URL TO A TERMINAL STATE, (c) diffs the journal's
-	// transaction against the anchor (same id? fields echoed?), and (d) optionally tests whether the
-	// undocumented POSReferenceID field targets a specific (older) transaction. Captures every raw body.
-	private static async Task GuidedJournalInvestigationAsync(SmartConnectClient client)
-	{
-		Console.WriteLine();
-		Console.WriteLine("GUIDED Journal.GetTransResult investigation (Decision 10).");
-		Console.WriteLine("Runs a REAL anchor purchase, then journal-queries it (polled to a terminal state) and diffs.");
-		Console.Write("Proceed? (y/N): ");
-		if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
-		{
-			return;
-		}
-
-		var amount = PromptAmount("Anchor purchase amount (e.g. 1.00): ");
-		if (amount == null)
-		{
-			return;
-		}
-
-		var anchorRef = "journal-anchor-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-		Transcript($"JOURNAL-INV anchor send ref={anchorRef} total={amount.Value.ToCents()}c");
-		var anchor = await client.ProcessTransactionAsync(new SmartConnectTransactionRequest
-		{
-			TransactionType = SmartConnectTransactionType.CardPurchase,
-			AmountTotal = amount.Value,
-			POSRegisterID = _settings.RegisterId!,
-			POSBusinessName = _settings.BusinessName!,
-			POSVendorName = _settings.VendorName!,
-			ClientTransactionRef = anchorRef
-		}, new ConsoleProgress()).ConfigureAwait(false);
-		RenderResult(anchor, anchorRef);
-
-		if (anchor.Status != SmartConnectTransactionStatus.Accepted && anchor.Status != SmartConnectTransactionStatus.Declined)
-		{
-			Console.WriteLine("Anchor did not reach a clean Accepted/Declined outcome — the investigation needs a known");
-			Console.WriteLine("result to diff against. Aborting; retry when the terminal is ready.");
-			return;
-		}
-
-		Console.WriteLine();
-		Console.WriteLine("Letting the device settle after the purchase (SmartConnect serialises calls per device)...");
-		await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-		Console.WriteLine("--- Bare Journal.GetTransResult (polled to terminal) ---");
-		var bare = await RawJournalQueryAsync(null).ConfigureAwait(false);
-		PrintJournalCapture("bare", bare);
-		CompareToAnchor(anchor, bare);
-
-		Console.WriteLine();
-		Console.WriteLine("POSReferenceID targeting test. POSReferenceID is the legacy POS-supplied reference —");
-		Console.WriteLine("a ClientTransactionRef (e.g. 'demo-...' / 'journal-anchor-...'), NOT the server transactionId.");
-		Console.Write("Enter an older ClientTransactionRef to inject as POSReferenceID, or blank to skip: ");
-		var olderId = Console.ReadLine()?.Trim();
-		if (!string.IsNullOrWhiteSpace(olderId))
-		{
-			Console.WriteLine();
-			Console.WriteLine($"--- Journal.GetTransResult with POSReferenceID={olderId} (polled to terminal) ---");
-			await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-			var targeted = await RawJournalQueryAsync(olderId).ConfigureAwait(false);
-			PrintJournalCapture("targeted", targeted);
-
-			var verdict = string.Equals(targeted.TransactionId, olderId, StringComparison.OrdinalIgnoreCase)
-				? "returned the REQUESTED older id — POSReferenceID appears to TARGET a specific transaction."
-				: string.Equals(targeted.TransactionId, anchor.TransactionId, StringComparison.OrdinalIgnoreCase)
-					? "returned the ANCHOR (latest) id, not the requested one — POSReferenceID appears IGNORED."
-					: "returned a DIFFERENT id than both — inspect the raw body above.";
-			Console.WriteLine("VERDICT (targeting): " + verdict);
-			Transcript($"JOURNAL-INV targeting requested={olderId} returned={targeted.TransactionId} anchor={anchor.TransactionId} :: {verdict}");
-		}
-
-		Console.WriteLine();
-		Console.WriteLine("Record in the ADR open-questions table (Decision 10):");
-		Console.WriteLine("  - bare GetTransResult returns the just-completed (last) transaction, polled to terminal? (see VERDICT above)");
-		Console.WriteLine("  - its fields (txn id / auth / amount) echo that transaction? (see field diff above)");
-		Console.WriteLine("  - POSReferenceID targets a specific transaction, or is ignored? (see targeting VERDICT)");
-	}
-
-	// Raw (NOT via the library) so we can inject the undocumented POSReferenceID and see the unparsed
-	// envelope. Crucially polls the journal's own PollingUrl to a terminal state — the step the first probes
-	// skipped.
-	private static async Task<JournalCapture> RawJournalQueryAsync(string? posReferenceId)
-	{
-		var fields = new List<KeyValuePair<string, string>>
-		{
-			new KeyValuePair<string, string>("POSRegisterID", _settings.RegisterId!),
-			new KeyValuePair<string, string>("POSBusinessName", _settings.BusinessName!),
-			new KeyValuePair<string, string>("POSVendorName", _settings.VendorName!),
-			new KeyValuePair<string, string>("TransactionMode", "ASYNC"),
-			new KeyValuePair<string, string>("TransactionType", "Journal.GetTransResult")
-		};
-
-		if (!string.IsNullOrWhiteSpace(posReferenceId))
-		{
-			fields.Add(new KeyValuePair<string, string>("POSReferenceID", posReferenceId!));
-		}
-
-		var capture = new JournalCapture();
-		using (var http = new HttpClient())
-		{
-			string body;
-
-			// SmartConnect serialises per device: a journal call right after a transaction can return
-			// HTTP 429 "device is busy". Retry the POST a few times with a pause before giving up.
-			var attempt = 0;
-			while (true)
-			{
-				attempt++;
-				using (var requestContent = new FormUrlEncodedContent(fields))
-				using (var response = await http.PostAsync(_settings.BaseUrl!.TrimEnd('/') + "/Transaction", requestContent).ConfigureAwait(false))
-				{
-					capture.InitialHttpStatus = (int)response.StatusCode;
-					body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-				}
-
-				if (capture.InitialHttpStatus != 429 || attempt >= 5)
-				{
-					break;
-				}
-
-				Console.WriteLine($"  device busy (429) — waiting before retry {attempt + 1}/5 ...");
-				await Task.Delay(TimeSpan.FromSeconds(4)).ConfigureAwait(false);
-			}
-
-			Transcript($"JOURNAL-INV post posRef={posReferenceId ?? "(none)"} http={capture.InitialHttpStatus} attempts={attempt} body={RedactToken(body)}");
-			var envelope = ParseEnvelope(body);
-			capture.Apply(body, envelope);
-
-			// Poll the ORIGINAL polling URL repeatedly to a terminal state (it is stable — same as the
-			// library's own loop). Do NOT re-derive it from each poll response: SmartConnect poll responses
-			// don't echo it, and re-deriving made an earlier version stop after a single poll.
-			var pollingUrl = envelope.PollingUrl;
-			var polls = 0;
-			while (!string.Equals(envelope.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase)
-				&& !string.IsNullOrEmpty(pollingUrl)
-				&& polls < 12)
-			{
-				await Task.Delay(TimeSpan.FromSeconds(2.5)).ConfigureAwait(false);
-				polls++;
-				using (var pollResponse = await http.GetAsync(pollingUrl).ConfigureAwait(false))
-				{
-					body = await pollResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
-				}
-
-				envelope = ParseEnvelope(body);
-				capture.Apply(body, envelope);
-				Transcript($"JOURNAL-INV poll #{polls} status={envelope.Status} body={RedactToken(body)}");
-			}
-
-			capture.PollCount = polls;
-		}
-
-		return capture;
-	}
-
-	private static Envelope ParseEnvelope(string body)
-	{
-		var data = new Dictionary<string, string>();
-		string? transactionId = null;
-		string? status = null;
-		string? pollingUrl = null;
-
-		try
-		{
-			using (var document = JsonDocument.Parse(body))
-			{
-				var root = document.RootElement;
-				if (root.ValueKind == JsonValueKind.Object)
-				{
-					if (root.TryGetProperty("transactionId", out var id) && id.ValueKind == JsonValueKind.String)
-					{
-						transactionId = id.GetString();
-					}
-
-					if (root.TryGetProperty("transactionStatus", out var s) && s.ValueKind == JsonValueKind.String)
-					{
-						status = s.GetString();
-					}
-
-					if (root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object)
-					{
-						foreach (var property in d.EnumerateObject())
-						{
-							data[property.Name] = property.Value.ValueKind == JsonValueKind.String
-								? (property.Value.GetString() ?? string.Empty)
-								: property.Value.GetRawText();
-						}
-
-						if (d.TryGetProperty("PollingUrl", out var url) && url.ValueKind == JsonValueKind.String)
-						{
-							pollingUrl = url.GetString();
-						}
-					}
-				}
-			}
-		}
-		catch (JsonException)
-		{
-			// Unparseable — caller still has the raw body to print.
-		}
-
-		return new Envelope { TransactionId = transactionId, Status = status, PollingUrl = pollingUrl, Data = data };
-	}
-
-	private static void PrintJournalCapture(string label, JournalCapture capture)
-	{
-		Console.WriteLine($"[{label}] initial HTTP {capture.InitialHttpStatus}, polled {capture.PollCount}x, final status {capture.FinalStatus ?? "(none)"}, txnId {capture.TransactionId ?? "(none)"}");
-		if (capture.Data.Count == 0)
-		{
-			Console.WriteLine("  (no parsed data; raw body:)");
-			Console.WriteLine("  " + RedactToken(capture.RawFinalBody));
-			return;
-		}
-
-		Console.WriteLine("  journal data fields:");
-		foreach (var pair in capture.Data)
-		{
-			Console.WriteLine($"    {pair.Key} = {RedactToken(pair.Value)}");
-		}
-	}
-
-	private static void CompareToAnchor(SmartConnectTransactionResult anchor, JournalCapture journal)
-	{
-		var sameTransaction = !string.IsNullOrEmpty(anchor.TransactionId)
-			&& string.Equals(anchor.TransactionId, journal.TransactionId, StringComparison.OrdinalIgnoreCase);
-
-		Console.WriteLine();
-		Console.WriteLine($"VERDICT (bare): journal txnId {(sameTransaction ? "MATCHES" : "does NOT match")} the anchor purchase "
-			+ $"({anchor.TransactionId ?? "(none)"} vs {journal.TransactionId ?? "(none)"}).");
-		Console.WriteLine(sameTransaction
-			? "  => bare Journal.GetTransResult returns the just-completed (last) transaction."
-			: "  => bare Journal.GetTransResult did NOT return the just-completed transaction (see raw body).");
-
-		CompareField("AuthId", anchor.AuthId, journal, "AuthId");
-		CompareField("AmountTotal(cents)", anchor.AmountTotal.ToCents().ToString(), journal, "AmountTotal");
-		CompareField("CardPan", anchor.CardPan, journal, "CardPan");
-		Transcript($"JOURNAL-INV compare anchorTxnId={anchor.TransactionId} journalTxnId={journal.TransactionId} sameTxn={sameTransaction}");
-	}
-
-	private static void CompareField(string label, string? anchorValue, JournalCapture journal, string journalKey)
-	{
-		if (string.IsNullOrEmpty(anchorValue))
-		{
-			return;
-		}
-
-		journal.Data.TryGetValue(journalKey, out var journalValue);
-		var echoed = string.Equals(anchorValue, journalValue, StringComparison.OrdinalIgnoreCase);
-		Console.WriteLine($"    {label}: anchor='{anchorValue}' journal='{journalValue ?? "(absent)"}' -> {(echoed ? "ECHOED" : "different/absent")}");
-	}
-
-	private sealed class Envelope
-	{
-		public string? TransactionId { get; set; }
-		public string? Status { get; set; }
-		public string? PollingUrl { get; set; }
-		public IReadOnlyDictionary<string, string> Data { get; set; } = new Dictionary<string, string>();
-	}
-
-	private sealed class JournalCapture
-	{
-		public int InitialHttpStatus { get; set; }
-		public int PollCount { get; set; }
-		public string? TransactionId { get; set; }
-		public string? FinalStatus { get; set; }
-		public string RawFinalBody { get; set; } = string.Empty;
-		public IReadOnlyDictionary<string, string> Data { get; set; } = new Dictionary<string, string>();
-
-		public void Apply(string rawBody, Envelope envelope)
-		{
-			RawFinalBody = rawBody;
-			TransactionId = envelope.TransactionId ?? TransactionId;
-			FinalStatus = envelope.Status;
-			Data = envelope.Data;
-		}
+		var result = await client.GetLastTransactionResultAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false);
+		RenderResult(result, "(Journal.GetTransResult — device's last transaction)");
 	}
 
 	// (R4) No pinpad needed. Run this on BOTH builds (net48 and net8.0) and compare: the same failures
@@ -593,6 +283,12 @@ internal static class Program
 		Console.WriteLine();
 		Console.WriteLine($"Status: {result.Status}   FailureCause: {result.FailureCause}");
 		Console.WriteLine($"Ref: {clientTransactionRef}   TransactionId: {result.TransactionId}");
+		if (!string.IsNullOrEmpty(result.ReferenceId))
+		{
+			// Journal.GetTransResult path: the recovered transaction's id, distinct from the query's TransactionId.
+			Console.WriteLine($"ReferenceId (reported txn): {result.ReferenceId}");
+		}
+
 		if (result.Status == SmartConnectTransactionStatus.Accepted || result.Status == SmartConnectTransactionStatus.Declined)
 		{
 			Console.WriteLine($"AuthId: {result.AuthId}   Card: {result.CardType} {result.CardPan}   Total: {result.AmountTotal.ToDecimal():0.00}");
@@ -621,7 +317,7 @@ internal static class Program
 		if (result.Status == SmartConnectTransactionStatus.Unknown)
 		{
 			Console.WriteLine("OUTCOME UNKNOWN — the customer may or may not have been charged.");
-			Console.WriteLine("Do NOT retry. Verify via the Journal probe (menu 6/7) or the acquirer before re-tendering.");
+			Console.WriteLine("Do NOT retry. Verify via Journal.GetTransResult (menu 6) or the acquirer before re-tendering.");
 		}
 
 		Transcript($"RESULT ref={clientTransactionRef} status={result.Status} cause={result.FailureCause} txnId={result.TransactionId} auth={result.AuthId} total={result.AmountTotal.ToCents()}c surcharge={result.AmountSurcharge.ToCents()}c tip={result.AmountTip.ToCents()}c");
