@@ -348,6 +348,25 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
   transaction's id distinctly from the query's `TransactionId`; `AmountTotal` is the documented match
   field, and `GetLastTransactionResultAsync` documents the device-scoped semantics.
 
+### Update (2026-06-17) — recovery contract hardened; `SaleData` ruled out as a key
+
+- **The library never auto-adopts.** `GetLastTransactionResultAsync` returns the device's last transaction as
+  a *candidate* plus its match evidence (`ReferenceId`, `AmountTotal`); it makes no adopt decision and never
+  asserts "this is yours." A recovery layer exists to *prevent* false certainty, so silently attaching the
+  device's last transaction to our sale would defeat its purpose. The caller match-before-adopts (today:
+  `AmountTotal`) and resolves anything short of a confident match to `Unknown`.
+- **How the caller confirms a candidate is a deferred, integrity-sensitive decision — not a glib prompt.** An
+  "Is this your transaction? [Yes]" dialog to a busy operator degrades into a rubber-stamp, reintroducing the
+  false certainty wearing a human fig-leaf. Whether to adopt automatically (single-register only), route to
+  back-office reconciliation, or something else is left to the consumer and explicitly flagged UX-sensitive.
+- **`SaleData` cannot serve as the correlation key (probed live 2026-06-17).** A purchase carrying a unique
+  `SaleData` marker echoed it back in the transaction's **own** completed result, but **not** in a subsequent
+  `Journal.GetTransResult`. So embedding a reference in `SaleData` gives Layer-2 recovery no exact key —
+  `AmountTotal` remains the only field that survives the crash *and* appears in the journal. (Where `SaleData`
+  does echo — the live result — Layer-1 recovery already holds the transaction-specific polling URL and needs
+  no extra key.) Net: the journal narrows the gap in the common single-register case but cannot be made
+  reliable; it is best-effort, never a safety net.
+
 ---
 
 ## Decisions Explicitly Deferred
@@ -356,7 +375,7 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
 |---|---|
 | QR transaction types (`QR.Merchant.Purchase`, `QR.Consumer.Purchase`, `QR.Refund`) | Structurally identical to card transactions (same polling/response, different `TransactionType`); the core can carry them, but they are not yet exercised. |
 | Pre-auth / finalise (`Card.Authorise`, `Card.Finalise`) | Not yet needed; addable when a consumer requires it. |
-| `SaleData` line-item attachment | Nice-to-have for analytics, not required for payment processing. (Also an open question — see below — whether the vendor echoes it back as a possible correlation carrier.) |
+| `SaleData` line-item attachment | A documented optional field worth supporting in a general-purpose library (the host accepts it and echoes it in the transaction's own result). Deferred as a feature; explicitly NOT a recovery aid — it is not echoed in the journal (Decision 10's 2026-06-17 update). |
 | Multi-pinpad per register | SmartConnect pairing is 1:1 (register ↔ device). |
 
 ### Resolved former questions
@@ -366,13 +385,22 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
 - **`merchantAccessToken`:** a bearer credential embedded in the polling URL query string — the GET poll
   authenticates via the URL. It is persisted by the state store (needed for recovery) and is **never**
   logged by the library; consumers must not log the full polling URL either.
+- **Client reference field on `POST /Transaction`:** confirmed with the vendor — there is **none**; the only
+  correlation id is the server-generated `transactionId`. The underlying design gap may get an idempotency-key
+  fix 6–12 months out (Decision 6); not counted on.
+- **`SaleData` echo:** probed live 2026-06-17 — echoed in the transaction's own completed result, **not** in
+  `Journal.GetTransResult`, so it cannot serve as a Layer-2 recovery correlation key (Decision 10's
+  2026-06-17 update).
 
 ### Still open
 
-- **Vendor authentication model** — the published request flow documents no separate vendor API
-  key/bearer/certificate (identity is pairing + the registration triple + the per-transaction
-  `merchantAccessToken`). Whether a production deployment needs an additional credential is unconfirmed;
-  the configuration keeps a non-breaking seam to add one later.
-- **Undocumented client reference field on `POST /Transaction`** — none is documented; not relied upon.
-- **Whether `SaleData` is echoed back** in poll/journal responses — a possible correlation carrier, not
-  designed upon while unconfirmed.
+- **Vendor authentication model (production onboarding only)** — no separate vendor API key/bearer/certificate
+  is documented, and live dev testing (pairing, transactions, journal) succeeded with only the registration
+  triple + the per-transaction `merchantAccessToken`, so none appears required for API calls. The remaining
+  unknown is whether *production onboarding* issues an extra credential; the configuration keeps a non-breaking
+  seam to add one.
+- **Non-financial operation status mapping is observed-wrong (pre-release fix)** — `Terminal.GetStatus`
+  returning `Result=OK` / `Status=READY` maps to `SmartConnectTransactionStatus.Failed`, because the outcome
+  mapper is built for financial result codes, not the non-financial response shape. Callers must read
+  `RawData` today. Before release, either map the non-financial shapes correctly (the live `Terminal.GetStatus`
+  shape is now captured) or stop surfacing a misleading `Status` for them. Does not affect the financial path.
