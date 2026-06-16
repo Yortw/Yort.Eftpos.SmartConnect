@@ -91,6 +91,9 @@ public class TransactionResponseParserTests
 		Assert.Equal(50, result.AmountSurcharge.ToCents());
 		Assert.Equal("MERCHANT COPY\nApproved", result.Receipt);
 		Assert.Equal("20260311120000000000", result.ResponseTimestamp);
+		// Invariant: ReferenceId is the journal path's recovered-txn id only — on a normal poll the
+		// envelope TransactionId already identifies the transaction, so ReferenceId must stay null.
+		Assert.Null(result.ReferenceId);
 	}
 
 	// On the journal path the envelope transactionId is the query's own id; the recovered transaction's
