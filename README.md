@@ -124,6 +124,10 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 
 Two warnings: financial menu actions send **real transactions** to the connected terminal (the app echoes amounts and asks for confirmation first), and its state directory contains **bearer-token polling URLs** — don't commit it or attach it to bug reports. It multi-targets `net48` and `net8.0`; running the transport probe on both is how the cross-runtime failure-classification gets verified.
 
+## Design rationale
+
+The *why* behind the API shape — the result-with-`Unknown` contract, the mandatory state-store, the transport `Delivery` classification, and the verified `Journal.GetTransResult` recovery semantics — is recorded in [docs/design-decisions.md](docs/design-decisions.md).
+
 ## Licence
 
 MIT (to be added before first release).
