@@ -75,11 +75,11 @@ internal static class Program
 			Console.WriteLine(" 4) Purchase + cash-out   (F9 probe: amount-relationship verdict)");
 			Console.WriteLine(" 5) List pending / resume (PollingUrl lifetime / F8 probe)");
 			Console.WriteLine(" 6) Journal.GetTransResult — last transaction (Decision 10)");
-			Console.WriteLine(" 8) Re-pair with same register id (idempotency probe)");
-			Console.WriteLine(" 9) Transport-shape probe (no pinpad needed; run on BOTH TFMs — R4)");
-			Console.WriteLine("10) Terminal status (is the cloud able to reach the pinpad?)");
-			Console.WriteLine("11) Settlement inquiry (read-only)");
-			Console.WriteLine("12) Settlement CUTOVER (state-changing!)");
+			Console.WriteLine(" 7) Re-pair with same register id (idempotency probe)");
+			Console.WriteLine(" 8) Transport-shape probe (no pinpad needed; run on BOTH TFMs — R4)");
+			Console.WriteLine(" 9) Terminal status (is the cloud able to reach the pinpad?)");
+			Console.WriteLine("10) Settlement inquiry (read-only)");
+			Console.WriteLine("11) Settlement CUTOVER (state-changing!)");
 			Console.WriteLine(" 0) Quit");
 			Console.Write("> ");
 
@@ -94,11 +94,11 @@ internal static class Program
 					case "4": await TransactAsync(client, SmartConnectTransactionType.CardPurchasePlusCash).ConfigureAwait(false); break;
 					case "5": await ListAndResumeAsync(client, store).ConfigureAwait(false); break;
 					case "6": await JournalQueryAsync(client).ConfigureAwait(false); break;
-					case "8": await PairAsync(client).ConfigureAwait(false); break;
-					case "9": await TransportShapeProbeAsync().ConfigureAwait(false); break;
-					case "10": RenderNonFinancial("Terminal.GetStatus", await client.GetTerminalStatusAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
-					case "11": RenderNonFinancial("Acquirer.Settlement.Inquiry", await client.SettlementInquiryAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
-					case "12": await CutoverAsync(client).ConfigureAwait(false); break;
+					case "7": await PairAsync(client).ConfigureAwait(false); break;
+					case "8": await TransportShapeProbeAsync().ConfigureAwait(false); break;
+					case "9": RenderNonFinancial("Terminal.GetStatus", await client.GetTerminalStatusAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
+					case "10": RenderNonFinancial("Acquirer.Settlement.Inquiry", await client.SettlementInquiryAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
+					case "11": await CutoverAsync(client).ConfigureAwait(false); break;
 					case "0": return;
 				}
 			}
@@ -348,7 +348,7 @@ internal static class Program
 
 		if (result.Status == SmartConnectTransactionStatus.Unknown)
 		{
-			Console.WriteLine("CUTOVER OUTCOME UNKNOWN — it MAY have executed. Run Settlement inquiry (menu 11) to");
+			Console.WriteLine("CUTOVER OUTCOME UNKNOWN — it MAY have executed. Run Settlement inquiry (menu 10) to");
 			Console.WriteLine("verify before re-issuing; a repeated cutover double-cuts the settlement window.");
 		}
 	}
