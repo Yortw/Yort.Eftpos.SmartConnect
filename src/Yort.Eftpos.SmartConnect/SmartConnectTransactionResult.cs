@@ -17,8 +17,22 @@ public sealed class SmartConnectTransactionResult
 	/// </summary>
 	public SmartConnectFailureCause FailureCause { get; init; } = SmartConnectFailureCause.None;
 
-	/// <summary>The server-issued transaction id.</summary>
+	/// <summary>
+	/// The server-issued id of <em>this</em> exchange. For a normal transaction this is the transaction's own
+	/// id; on the Layer-2 recovery path (<see cref="SmartConnectClient.GetLastTransactionResultAsync(SmartConnectRegistration)"/>,
+	/// i.e. <c>Journal.GetTransResult</c>) it is the id of the <em>query</em>, not of the transaction being
+	/// reported — see <see cref="ReferenceId"/> for the reported transaction's id.
+	/// </summary>
 	public string? TransactionId { get; init; }
+
+	/// <summary>
+	/// The id of the transaction actually being <em>reported</em>, when it differs from <see cref="TransactionId"/>.
+	/// Populated from the response's <c>ReferenceId</c> field, which <c>Journal.GetTransResult</c> uses to carry
+	/// the recovered (last) transaction's id while the envelope id identifies the journal query itself
+	/// (ADR Decision 10, verified 2026-06-16). Null on the normal transaction path, where
+	/// <see cref="TransactionId"/> already identifies the transaction.
+	/// </summary>
+	public string? ReferenceId { get; init; }
 
 	/// <summary>The acquirer authorisation id, when approved.</summary>
 	public string? AuthId { get; init; }

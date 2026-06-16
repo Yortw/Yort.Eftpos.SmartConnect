@@ -84,6 +84,9 @@ internal static class TransactionResponseParser
 			{
 				Status = MapOutcome(GetString(data, "TransactionResult"), GetString(data, "Result")),
 				TransactionId = GetString(root, "transactionId"),
+				// data.ReferenceId carries the SUBJECT transaction's id on the Journal.GetTransResult path,
+				// where the envelope transactionId is only the query's own id (ADR Decision 10).
+				ReferenceId = GetString(data, "ReferenceId"),
 				ResponseTimestamp = GetString(root, "transactionTimeStamp"),
 				AuthId = GetString(data, "AuthId"),
 				AcquirerRef = GetString(data, "AcquirerRef"),

@@ -36,6 +36,19 @@ public class TransactionResponseParserTests
 		}
 	}";
 
+	// Journal.GetTransResult (Layer-2 recovery) returns the SUBJECT transaction's id in data.ReferenceId,
+	// while the envelope transactionId is the query's OWN id (verified live, ADR Decision 10, 2026-06-16).
+	private const string JournalResponse = @"{
+		""transactionId"": ""query-own-id"",
+		""transactionTimeStamp"": ""20260616120000000000"",
+		""transactionStatus"": ""COMPLETED"",
+		""data"": {
+			""TransactionResult"": ""OK-ACCEPTED"", ""Result"": ""OK"",
+			""ReferenceId"": ""subject-txn-id"",
+			""AmountTotal"": ""111""
+		}
+	}";
+
 	private static string Completed(string transactionResult, string result) => @"{
 		""transactionStatus"": ""COMPLETED"",
 		""data"": { ""TransactionResult"": """ + transactionResult + @""", ""Result"": """ + result + @""" }
@@ -78,6 +91,16 @@ public class TransactionResponseParserTests
 		Assert.Equal(50, result.AmountSurcharge.ToCents());
 		Assert.Equal("MERCHANT COPY\nApproved", result.Receipt);
 		Assert.Equal("20260311120000000000", result.ResponseTimestamp);
+	}
+
+	// On the journal path the envelope transactionId is the query's own id; the recovered transaction's
+	// id is in data.ReferenceId. The result must surface both distinctly so callers can correlate.
+	[Fact]
+	public void ParsePoll_SurfacesDataReferenceIdDistinctFromEnvelopeTransactionId()
+	{
+		var result = TransactionResponseParser.ParsePollResponse(JournalResponse).Result!;
+		Assert.Equal("query-own-id", result.TransactionId);
+		Assert.Equal("subject-txn-id", result.ReferenceId);
 	}
 
 	[Fact]
