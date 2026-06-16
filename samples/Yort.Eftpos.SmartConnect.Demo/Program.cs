@@ -309,19 +309,23 @@ internal static class Program
 		}
 
 		Console.WriteLine();
+		Console.WriteLine("Letting the device settle after the purchase (SmartConnect serialises calls per device)...");
+		await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
 		Console.WriteLine("--- Bare Journal.GetTransResult (polled to terminal) ---");
 		var bare = await RawJournalQueryAsync(null).ConfigureAwait(false);
 		PrintJournalCapture("bare", bare);
 		CompareToAnchor(anchor, bare);
 
 		Console.WriteLine();
-		Console.WriteLine("POSReferenceID targeting test needs a transaction OLDER than the anchor.");
-		Console.Write("Enter an older transactionId (from a previous run/transcript), or blank to skip: ");
+		Console.WriteLine("POSReferenceID targeting test. POSReferenceID is the legacy POS-supplied reference —");
+		Console.WriteLine("a ClientTransactionRef (e.g. 'demo-...' / 'journal-anchor-...'), NOT the server transactionId.");
+		Console.Write("Enter an older ClientTransactionRef to inject as POSReferenceID, or blank to skip: ");
 		var olderId = Console.ReadLine()?.Trim();
 		if (!string.IsNullOrWhiteSpace(olderId))
 		{
 			Console.WriteLine();
 			Console.WriteLine($"--- Journal.GetTransResult with POSReferenceID={olderId} (polled to terminal) ---");
+			await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
 			var targeted = await RawJournalQueryAsync(olderId).ConfigureAwait(false);
 			PrintJournalCapture("targeted", targeted);
 
@@ -364,26 +368,45 @@ internal static class Program
 		using (var http = new HttpClient())
 		{
 			string body;
-			using (var content = new FormUrlEncodedContent(fields))
-			using (var response = await http.PostAsync(_settings.BaseUrl!.TrimEnd('/') + "/Transaction", content).ConfigureAwait(false))
+
+			// SmartConnect serialises per device: a journal call right after a transaction can return
+			// HTTP 429 "device is busy". Retry the POST a few times with a pause before giving up.
+			var attempt = 0;
+			while (true)
 			{
-				capture.InitialHttpStatus = (int)response.StatusCode;
-				body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+				attempt++;
+				using (var requestContent = new FormUrlEncodedContent(fields))
+				using (var response = await http.PostAsync(_settings.BaseUrl!.TrimEnd('/') + "/Transaction", requestContent).ConfigureAwait(false))
+				{
+					capture.InitialHttpStatus = (int)response.StatusCode;
+					body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+				}
+
+				if (capture.InitialHttpStatus != 429 || attempt >= 5)
+				{
+					break;
+				}
+
+				Console.WriteLine($"  device busy (429) — waiting before retry {attempt + 1}/5 ...");
+				await Task.Delay(TimeSpan.FromSeconds(4)).ConfigureAwait(false);
 			}
 
-			Transcript($"JOURNAL-INV post posRef={posReferenceId ?? "(none)"} http={capture.InitialHttpStatus} body={RedactToken(body)}");
+			Transcript($"JOURNAL-INV post posRef={posReferenceId ?? "(none)"} http={capture.InitialHttpStatus} attempts={attempt} body={RedactToken(body)}");
 			var envelope = ParseEnvelope(body);
 			capture.Apply(body, envelope);
 
-			// Poll the journal's own URL to a terminal state (>= 2s per poll to avoid 429), capped.
+			// Poll the ORIGINAL polling URL repeatedly to a terminal state (it is stable — same as the
+			// library's own loop). Do NOT re-derive it from each poll response: SmartConnect poll responses
+			// don't echo it, and re-deriving made an earlier version stop after a single poll.
+			var pollingUrl = envelope.PollingUrl;
 			var polls = 0;
 			while (!string.Equals(envelope.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase)
-				&& !string.IsNullOrEmpty(envelope.PollingUrl)
-				&& polls < 8)
+				&& !string.IsNullOrEmpty(pollingUrl)
+				&& polls < 12)
 			{
 				await Task.Delay(TimeSpan.FromSeconds(2.5)).ConfigureAwait(false);
 				polls++;
-				using (var pollResponse = await http.GetAsync(envelope.PollingUrl).ConfigureAwait(false))
+				using (var pollResponse = await http.GetAsync(pollingUrl).ConfigureAwait(false))
 				{
 					body = await pollResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
 				}
