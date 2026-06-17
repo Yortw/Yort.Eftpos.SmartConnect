@@ -37,7 +37,9 @@ public sealed class InMemoryTransactionStateStore : ISmartConnectTransactionStat
 		CallLog.Add("Save:" + clientTransactionRef);
 		if (ThrowOnSave != null)
 		{
-			throw ThrowOnSave;
+			// Fault the task (don't throw synchronously) — matches the real async store's shape so any caller
+			// that captures the Task before awaiting behaves the same against the fake and the real thing.
+			return Task.FromException(ThrowOnSave);
 		}
 
 		Records[clientTransactionRef] = new Record
@@ -56,7 +58,7 @@ public sealed class InMemoryTransactionStateStore : ISmartConnectTransactionStat
 		CallLog.Add("UpdatePolling:" + clientTransactionRef);
 		if (ThrowOnUpdatePollingDetails != null)
 		{
-			throw ThrowOnUpdatePollingDetails;
+			return Task.FromException(ThrowOnUpdatePollingDetails);
 		}
 
 		var record = Required(clientTransactionRef);
@@ -70,7 +72,7 @@ public sealed class InMemoryTransactionStateStore : ISmartConnectTransactionStat
 		CallLog.Add("UpdateCompleted:" + clientTransactionRef + ":" + status);
 		if (ThrowOnUpdateCompleted != null)
 		{
-			throw ThrowOnUpdateCompleted;
+			return Task.FromException(ThrowOnUpdateCompleted);
 		}
 
 		Required(clientTransactionRef).Status = status;
