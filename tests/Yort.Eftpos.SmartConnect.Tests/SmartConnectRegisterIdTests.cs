@@ -51,7 +51,7 @@ public class SmartConnectRegisterIdTests
 	[Fact]
 	public void Generate_IsVersion5AndRfc4122Variant()
 	{
-		var id = SmartConnectRegisterId.Generate("AcmeHeadOffice", "POS-7").ToString();
+		var id = SmartConnectRegisterId.Generate("AcmeHeadOffice", "POS-7");
 		// Format: xxxxxxxx-xxxx-Vxxx-Nxxx-xxxxxxxxxxxx  (V = version, N high bits = variant)
 		Assert.Equal('5', id[14]);
 		Assert.Contains(id[19], "89ab");

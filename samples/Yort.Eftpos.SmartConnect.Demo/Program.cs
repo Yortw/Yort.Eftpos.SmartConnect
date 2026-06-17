@@ -579,7 +579,7 @@ internal static class Program
 
 		// Deterministic UUID v5: the same business + register names always produce the same id, so this
 		// demo re-uses its pairing across runs and reinstalls.
-		_settings.RegisterId = SmartConnectRegisterId.Generate(_settings.BusinessName!, _settings.RegisterName!).ToString();
+		_settings.RegisterId = SmartConnectRegisterId.Generate(_settings.BusinessName!, _settings.RegisterName!);
 		Console.WriteLine("POSRegisterID (deterministic): " + _settings.RegisterId);
 
 		Directory.CreateDirectory(_settings.StateDirectory!);

@@ -29,9 +29,13 @@ public static class SmartConnectRegisterId
 	/// <param name="registerIdentifier">
 	/// Identifies the specific terminal/register. Prefer a stable logical id over a hardware id (see remarks).
 	/// </param>
-	/// <returns>A deterministic version-5 UUID.</returns>
+	/// <returns>
+	/// A deterministic id in canonical UUID string form (lowercase, hyphenated — `Guid` "D" format), ready to
+	/// assign to <c>POSRegisterID</c>. Returns a string (not a <see cref="Guid"/>) so callers needn't convert and
+	/// format consistently, and so the id-generation algorithm could change without a breaking signature change.
+	/// </returns>
 	/// <exception cref="ArgumentException">Either argument is null, empty, or whitespace.</exception>
-	public static Guid Generate(string merchantIdentifier, string registerIdentifier)
+	public static string Generate(string merchantIdentifier, string registerIdentifier)
 	{
 		if (string.IsNullOrWhiteSpace(merchantIdentifier))
 		{
@@ -43,7 +47,7 @@ public static class SmartConnectRegisterId
 			throw new ArgumentException("Register identifier must not be null, empty, or whitespace.", nameof(registerIdentifier));
 		}
 
-		return UuidV5.Create(RegisterNamespace, Combine(merchantIdentifier, registerIdentifier));
+		return UuidV5.Create(RegisterNamespace, Combine(merchantIdentifier, registerIdentifier)).ToString("D");
 	}
 
 	// Length-prefixed join so ("ab","c") and ("a","bc") never collide, without relying on a delimiter
