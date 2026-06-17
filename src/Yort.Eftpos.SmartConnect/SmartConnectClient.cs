@@ -387,7 +387,7 @@ public sealed class SmartConnectClient : IDisposable
 	public Task<SmartConnectOperationResult> GetTerminalStatusAsync(SmartConnectRegistration registration, IProgress<SmartConnectPollingStatus>? progress)
 		=> ExecuteOperationAsync(registration, SmartConnectTransactionType.TerminalGetStatus, progress);
 
-	/// <summary>Performs an acquirer logon (<c>Acquirer.Logon</c>). Read-only/safe to retry; no state-store calls. See the provisional-Status remark on <see cref="GetTerminalStatusAsync(SmartConnectRegistration)"/>.</summary>
+	/// <summary>Performs an acquirer logon (<c>Acquirer.Logon</c>). Read-only/safe to retry; no state-store calls. See the Status remark on <see cref="GetTerminalStatusAsync(SmartConnectRegistration)"/>.</summary>
 	/// <param name="registration">The registration triple, as used at pairing.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="registration"/> is null.</exception>
 	/// <exception cref="ArgumentException">A mandatory field of <paramref name="registration"/> is blank.</exception>
@@ -406,7 +406,7 @@ public sealed class SmartConnectClient : IDisposable
 	public Task<SmartConnectOperationResult> LogonAsync(SmartConnectRegistration registration, IProgress<SmartConnectPollingStatus>? progress)
 		=> ExecuteOperationAsync(registration, SmartConnectTransactionType.AcquirerLogon, progress);
 
-	/// <summary>Queries the current settlement totals (<c>Acquirer.Settlement.Inquiry</c>). Read-only/safe to retry; no state-store calls. Settlement shares the client-wide <see cref="SmartConnectClientConfiguration.MaxPollDuration"/> budget. See the provisional-Status remark on <see cref="GetTerminalStatusAsync(SmartConnectRegistration)"/>.</summary>
+	/// <summary>Queries the current settlement totals (<c>Acquirer.Settlement.Inquiry</c>). Read-only/safe to retry; no state-store calls. Settlement shares the client-wide <see cref="SmartConnectClientConfiguration.MaxPollDuration"/> budget. See the Status remark on <see cref="GetTerminalStatusAsync(SmartConnectRegistration)"/>.</summary>
 	/// <param name="registration">The registration triple, as used at pairing.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="registration"/> is null.</exception>
 	/// <exception cref="ArgumentException">A mandatory field of <paramref name="registration"/> is blank.</exception>
