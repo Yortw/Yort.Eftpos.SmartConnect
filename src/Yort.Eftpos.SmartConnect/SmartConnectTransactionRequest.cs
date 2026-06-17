@@ -43,4 +43,12 @@ public sealed class SmartConnectTransactionRequest
 
 	/// <summary>An optional vendor transaction reference, used to pair pre-auth (<c>Card.Authorise</c>) with finalise (<c>Card.Finalise</c>).</summary>
 	public string? TransactionReference { get; set; }
+
+	/// <summary>
+	/// Optional sale/line-item metadata sent in the <c>SaleData</c> field. Construct a versioned instance
+	/// (e.g. <see cref="SaleData.V1.SaleData"/>). Descriptive metadata only — it is NOT echoed back and cannot
+	/// be used for crash recovery. Omitted from the request when null. The library does not validate the content
+	/// of amount/quantity strings (their encoding is unspecified) — pass what the terminal expects.
+	/// </summary>
+	public SmartConnectSaleData? SaleData { get; set; }
 }

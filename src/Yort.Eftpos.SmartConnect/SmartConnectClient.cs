@@ -837,6 +837,11 @@ public sealed class SmartConnectClient : IDisposable
 			fields.Add(new KeyValuePair<string, string?>("TransactionReference", request.TransactionReference));
 		}
 
+		if (request.SaleData != null)
+		{
+			fields.Add(new KeyValuePair<string, string?>("SaleData", Internal.SaleDataSerializer.Serialize(request.SaleData)));
+		}
+
 		using (var httpRequest = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/Transaction"))
 		{
 			httpRequest.Content = new StringContent(FormUrlEncoder.Encode(fields), Encoding.UTF8, "application/x-www-form-urlencoded");
@@ -860,6 +865,21 @@ public sealed class SmartConnectClient : IDisposable
 		if (request.AmountTotal.ToCents() <= 0)
 		{
 			throw new ArgumentException("AmountTotal must be positive (refunds are positive amounts with TransactionType Card.Refund).", "request");
+		}
+
+		if (request.SaleData != null)
+		{
+			// Serialise SaleData up front (before the sentinel) so an unserialisable caller type fails here —
+			// never as a dangling pending sentinel or a half-sent transaction. Bad caller input throws
+			// (Decision 9); operational conditions do not. The V1 types are always serialisable.
+			try
+			{
+				Internal.SaleDataSerializer.Serialize(request.SaleData);
+			}
+			catch (Exception ex) when (ex is JsonException || ex is NotSupportedException)
+			{
+				throw new ArgumentException("The SaleData could not be serialised (e.g. a derived type with a reference cycle or a non-serialisable property).", nameof(request), ex);
+			}
 		}
 
 		ThrowIfDisposed();
