@@ -57,4 +57,34 @@ public class SmartConnectClientConfigurationTests
 	{
 		Assert.Equal(TimeSpan.FromMinutes(5), new SmartConnectClientConfiguration().MaxPollDuration);
 	}
+
+	// A MaxPollDuration below one PollInterval would make the poll loop give up before its first poll —
+	// returning Unknown for a transaction that may have been sent. Rejected at construction.
+	[Fact]
+	public void Validate_MaxPollDurationBelowPollInterval_Throws()
+	{
+		var config = ValidConfig();
+		config.PollInterval = TimeSpan.FromSeconds(3);
+		config.MaxPollDuration = TimeSpan.FromSeconds(2);
+		Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+	}
+
+	[Fact]
+	public void Validate_NonPositiveMaxPollDuration_Throws()
+	{
+		var config = ValidConfig();
+		config.MaxPollDuration = TimeSpan.Zero;
+		Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+	}
+
+	// BackoffCap is the ceiling for 429 backoff and the Retry-After clamp; below PollInterval it collapses the
+	// backoff into a tight re-poll storm.
+	[Fact]
+	public void Validate_BackoffCapBelowPollInterval_Throws()
+	{
+		var config = ValidConfig();
+		config.PollInterval = TimeSpan.FromSeconds(3);
+		config.BackoffCap = TimeSpan.FromSeconds(2);
+		Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+	}
 }

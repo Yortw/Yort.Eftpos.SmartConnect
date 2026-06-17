@@ -234,6 +234,45 @@ public class SmartConnectClientTransactionTests
 	}
 
 	[Fact]
+	public async Task Process_PurchasePlusCash_NonPositiveCash_Throws()
+	{
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(PendingResponseHandler())));
+
+		var request = CreateRequest();
+		request.TransactionType = SmartConnectTransactionType.CardPurchasePlusCash;
+		request.AmountCash = Money.FromCents(0);
+
+		await Assert.ThrowsAsync<ArgumentException>(() => client.ProcessTransactionAsync(request));
+	}
+
+	[Fact]
+	public async Task Process_PurchasePlusCash_CashExceedsTotal_Throws()
+	{
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(PendingResponseHandler())));
+
+		var request = CreateRequest();
+		request.TransactionType = SmartConnectTransactionType.CardPurchasePlusCash;
+		request.AmountTotal = Money.FromCents(500);
+		request.AmountCash = Money.FromCents(600);
+
+		await Assert.ThrowsAsync<ArgumentException>(() => client.ProcessTransactionAsync(request));
+	}
+
+	// Disposing the HttpClient mid-send surfaces ObjectDisposedException; ProcessTransactionAsync must NOT
+	// throw it (Decision 9 never-throws) — the request may have reached the service, so it resolves to Unknown.
+	[Fact]
+	public async Task Process_ObjectDisposedDuringSend_ReturnsUnknown_DoesNotThrow()
+	{
+		var handler = new MockHttpHandler(_ => throw new ObjectDisposedException("HttpClient"));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler)));
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+		Assert.Equal(SmartConnectFailureCause.TransportUnknown, result.FailureCause);
+	}
+
+	[Fact]
 	public async Task Process_AfterDispose_Throws()
 	{
 		var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(PendingResponseHandler())));

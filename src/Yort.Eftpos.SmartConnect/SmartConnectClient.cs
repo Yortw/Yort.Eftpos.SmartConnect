@@ -31,7 +31,9 @@ public sealed class SmartConnectClient : IDisposable
 	private readonly HttpClient _httpClient;
 	private readonly bool _ownsHttpClient;
 	private readonly string _baseUrl;
-	private bool _disposed;
+	// volatile: Dispose() may run on a different thread than an in-flight poll loop (the documented
+	// dispose-mid-poll shutdown path), so the loop must observe the write without a stale cache read.
+	private volatile bool _disposed;
 
 	/// <summary>Creates a client from the given configuration.</summary>
 	/// <param name="configuration">The configuration; validated immediately so misconfiguration fails at construction, not at first request.</param>
@@ -867,6 +869,22 @@ public sealed class SmartConnectClient : IDisposable
 			throw new ArgumentException("AmountTotal must be positive (refunds are positive amounts with TransactionType Card.Refund).", "request");
 		}
 
+		if (string.Equals(request.TransactionType, SmartConnectTransactionType.CardPurchasePlusCash, StringComparison.Ordinal))
+		{
+			// The docs state AmountCash is the cash-out COMPONENT of AmountTotal, so it must be positive and
+			// not exceed the total — caught locally rather than relying on a vendor rejection.
+			var cashCents = request.AmountCash.ToCents();
+			if (cashCents <= 0)
+			{
+				throw new ArgumentException("AmountCash must be positive for Card.PurchasePlusCash.", "request");
+			}
+
+			if (cashCents > request.AmountTotal.ToCents())
+			{
+				throw new ArgumentException("AmountCash must not exceed AmountTotal (the cash-out is a component of AmountTotal).", "request");
+			}
+		}
+
 		if (request.SaleData != null)
 		{
 			// Serialise SaleData up front (before the sentinel) so an unserialisable caller type fails here —
@@ -956,6 +974,14 @@ public sealed class SmartConnectClient : IDisposable
 			// the buffer and cannot fail on network. Do not change the completion option without
 			// revisiting that assumption.
 			return await _httpClient.SendAsync(request).ConfigureAwait(false);
+		}
+		catch (ObjectDisposedException ex)
+		{
+			// Disposed mid-send (host shutdown racing an in-flight request): the request may already have
+			// reached the service, so the outcome is Unknown, never NotSent. Surfaced as the typed transport
+			// exception so the poll loop / POST handler resolve it to Unknown rather than letting it escape
+			// ProcessTransactionAsync raw (which would break the never-throw-for-runtime-conditions contract).
+			throw new SmartConnectTransportException(SmartConnectRequestDelivery.Unknown, ex);
 		}
 		catch (Exception ex) when (TransportFailureClassifier.IsTransportFailure(ex))
 		{

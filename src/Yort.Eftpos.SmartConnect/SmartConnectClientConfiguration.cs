@@ -58,7 +58,7 @@ public sealed class SmartConnectClientConfiguration
 
 	/// <summary>Validates the configuration, throwing if a required value is missing or out of range.</summary>
 	/// <exception cref="ArgumentNullException"><see cref="BaseUrl"/> or <see cref="StateStore"/> is null.</exception>
-	/// <exception cref="ArgumentOutOfRangeException"><see cref="PollInterval"/> is below <see cref="MinimumPollInterval"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><see cref="PollInterval"/> is below <see cref="MinimumPollInterval"/>, <see cref="MaxPollDuration"/> is not at least <see cref="PollInterval"/>, or <see cref="BackoffCap"/> is below <see cref="PollInterval"/>.</exception>
 	public void Validate()
 	{
 		if (BaseUrl == null)
@@ -74,6 +74,20 @@ public sealed class SmartConnectClientConfiguration
 		if (PollInterval < MinimumPollInterval)
 		{
 			throw new ArgumentOutOfRangeException(nameof(PollInterval), PollInterval, $"PollInterval must be at least {MinimumPollInterval.TotalSeconds:0}s; the service rate-limits faster polling.");
+		}
+
+		// A MaxPollDuration below one PollInterval would make the poll loop give up before its first poll —
+		// returning Unknown for a transaction that may have been sent. Reject it at construction.
+		if (MaxPollDuration < PollInterval)
+		{
+			throw new ArgumentOutOfRangeException(nameof(MaxPollDuration), MaxPollDuration, "MaxPollDuration must be at least PollInterval; otherwise polling gives up before the first poll.");
+		}
+
+		// BackoffCap is the ceiling for 429 backoff and the Retry-After clamp; below PollInterval it would
+		// collapse the backoff into a tight re-poll storm.
+		if (BackoffCap < PollInterval)
+		{
+			throw new ArgumentOutOfRangeException(nameof(BackoffCap), BackoffCap, "BackoffCap must be at least PollInterval; it is the upper bound for 429 backoff.");
 		}
 	}
 }
