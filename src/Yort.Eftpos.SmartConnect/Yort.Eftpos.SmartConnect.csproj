@@ -9,6 +9,29 @@
     <!-- Single TFM today; structured as <TargetFrameworks> so adding net8.0 later is a one-line, non-breaking change. Keep the public API netstandard2.0-expressible. -->
   </PropertyGroup>
 
+  <!-- NuGet package metadata. Unofficial: not affiliated with or endorsed by Shift4 / SmartPay (precedent: Yort.Eftpos.Verifone.PosLink). -->
+  <PropertyGroup>
+    <PackageId>Yort.Eftpos.SmartConnect</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Authors>Yortw</Authors>
+    <Company>Yortw</Company>
+    <Description>Unofficial .NET client for the SmartPay / Shift4 SmartConnect (New Zealand) EFTPOS cloud REST API: pairs a POS register to a payment terminal and processes card transactions via an asynchronous polling model, with crash-recovery state and HTTP 429 backoff. Not affiliated with or endorsed by Shift4 / SmartPay.</Description>
+    <Copyright>Copyright (c) 2026 Yortw</Copyright>
+    <PackageTags>eftpos;smartconnect;smartpay;shift4;payments;nz;pos</PackageTags>
+    <PackageProjectUrl>https://github.com/yortw/Yort.Eftpos.SmartConnect</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/yortw/Yort.Eftpos.SmartConnect</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
       <_Parameter1>Yort.Eftpos.SmartConnect.Tests</_Parameter1>
@@ -16,9 +39,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Current LTS majors; both still ship a netstandard2.0 target. Floating patch keeps us on security fixes; pin exactly before first release. -->
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.*" />
-    <PackageReference Include="System.Text.Json" Version="8.0.*" />
+    <!-- Explicit MINIMUM floors, deliberately not floating (8.0.*) and not exact-pinned ([8.0.x]): in a library a
+         PackageReference version is a >= minimum that NuGet floats UP to unify the consumer's dependency graph.
+         Floating is non-deterministic at build/pack; an exact pin causes consumer version conflicts. 8.0.0 is the
+         lowest we build and test against; it can be lowered later (e.g. System.Text.Json 6.0 has SerializeToNode)
+         once verified against that floor. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+    <PackageReference Include="System.Text.Json" Version="8.0.0" />
   </ItemGroup>
 
 </Project>
