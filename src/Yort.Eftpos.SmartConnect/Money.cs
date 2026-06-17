@@ -29,8 +29,9 @@ public readonly struct Money : IEquatable<Money>
 	public static Money FromCents(long cents) => new Money(cents);
 
 	/// <summary>
-	/// Creates a <see cref="Money"/> from a dollar amount, rounding to whole cents (half away from zero).
-	/// Inputs should already be cents-precise (≤2 decimal places).
+	/// Creates a <see cref="Money"/> from a dollar amount. Sub-cent precision (3+ decimal places) is rounded to
+	/// whole cents, half away from zero — it is NOT rejected, so pass a cents-precise value (≤2 decimal places)
+	/// if you need exactness; use <see cref="FromCents(long)"/> when you already have cents.
 	/// </summary>
 	public static Money FromDecimal(decimal dollars) => new Money((long)Math.Round(dollars * 100m, MidpointRounding.AwayFromZero));
 

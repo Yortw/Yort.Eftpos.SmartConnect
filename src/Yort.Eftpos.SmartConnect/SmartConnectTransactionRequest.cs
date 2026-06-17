@@ -1,9 +1,9 @@
 namespace Yort.Eftpos.SmartConnect;
 
 /// <summary>
-/// A request to process a transaction. Amounts are authoritative in minor units (cents) via the
-/// <c>*Cents</c> properties; the <see cref="decimal"/> convenience properties read/write those cents so
-/// callers can work in dollars without exposing rounding decisions.
+/// A request to process a transaction. Amounts (<see cref="AmountTotal"/>, <see cref="AmountCash"/>) are
+/// <see cref="Money"/> values — minor-unit (cents) authoritative; build them with
+/// <see cref="Money.FromDecimal(decimal)"/> to work in dollars or <see cref="Money.FromCents(long)"/> for exact cents.
 /// </summary>
 public sealed class SmartConnectTransactionRequest
 {

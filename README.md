@@ -2,7 +2,7 @@
 
 A .NET client library for the **SmartPay / Shift4 SmartConnect** EFTPOS integration (New Zealand) — a cloud REST API that pairs a point-of-sale register to a payment terminal and processes card transactions via an asynchronous polling model.
 
-> ⚠️ **Work in progress.** This library is under active initial development and is not yet released or published to NuGet. Until then, build from source.
+> ⚠️ **Pre-release / work in progress.** Under active initial development; pre-release builds only, not yet on public NuGet. The API may change before 1.0.
 >
 > **Unofficial:** this is an independent, unofficial client library and is not affiliated with, endorsed by, or supported by Shift4 / SmartPay. "SmartConnect", "SmartPay", and "Shift4" are trademarks of their respective owners. The official API documentation is at <https://smartconnectdev.shift4.co.nz>.
 
@@ -32,11 +32,13 @@ var configuration = new SmartConnectClientConfiguration
 
 using var client = new SmartConnectClient(configuration);
 
+// Deterministic UUID v5: same merchant + register always produce the same id (returned as the canonical
+// UUID string), so a reinstalled register keeps its existing pairing.
+var registerId = SmartConnectRegisterId.Generate("MyMerchant", "Register-01");
+
 var pairing = await client.PairAsync("12345678", new SmartConnectPairingRequest
 {
-	// Deterministic UUID v5: same merchant + register always produces the same id, so a
-	// reinstalled register keeps its existing pairing.
-	POSRegisterID = SmartConnectRegisterId.Generate("MyMerchant", "Register-01").ToString(),
+	POSRegisterID = registerId,
 	POSBusinessName = "My Store",
 	POSVendorName = "MyPos",
 	POSRegisterName = "Front Counter"
@@ -53,11 +55,13 @@ The `POSRegisterID`/`POSBusinessName`/`POSVendorName` triple must match across p
 ### 2. Process a transaction
 
 ```csharp
+var saleReference = "sale-0001"; // your stable per-sale id — the SAME value across restarts (the crash-recovery key)
+
 var result = await client.ProcessTransactionAsync(new SmartConnectTransactionRequest
 {
 	TransactionType = SmartConnectTransactionType.CardPurchase,
 	AmountTotal = Money.FromDecimal(19.95m),
-	POSRegisterID = registerId,          // the same triple used at pairing
+	POSRegisterID = registerId,          // registerId + the names from pairing (step 1) — the triple must match
 	POSBusinessName = "My Store",
 	POSVendorName = "MyPos",
 	ClientTransactionRef = saleReference // stable across restarts — it is the crash-recovery key
@@ -126,8 +130,8 @@ Two warnings: financial menu actions send **real transactions** to the connected
 
 ## Design rationale
 
-The *why* behind the API shape — the result-with-`Unknown` contract, the mandatory state-store, the transport `Delivery` classification, and the verified `Journal.GetTransResult` recovery semantics — is recorded in [docs/design-decisions.md](docs/design-decisions.md).
+The *why* behind the API shape — the result-with-`Unknown` contract, the mandatory state-store, the transport `Delivery` classification, and the verified `Journal.GetTransResult` recovery semantics — is recorded in [docs/design-decisions.md](https://github.com/Yortw/Yort.Eftpos.SmartConnect/blob/main/docs/design-decisions.md).
 
 ## Licence
 
-MIT (to be added before first release).
+Licensed under the [MIT License](https://github.com/Yortw/Yort.Eftpos.SmartConnect/blob/main/LICENSE).

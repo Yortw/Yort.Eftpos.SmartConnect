@@ -18,10 +18,10 @@ public static class SmartConnectTransactionType
 	/// <summary>Cash advance / cash-out only. Requires <c>AmountTotal</c>.</summary>
 	public const string CardCashAdvance = "Card.CashAdvance";
 
-	/// <summary>Pre-authorisation. Requires <c>AmountAuth</c>.</summary>
+	/// <summary>Pre-authorisation. Requires <c>AmountAuth</c>. NOT YET FULLY SUPPORTED — <see cref="SmartConnectTransactionRequest"/> does not yet carry an <c>AmountAuth</c> field (deferred; see the design notes).</summary>
 	public const string CardAuthorise = "Card.Authorise";
 
-	/// <summary>Finalise a prior pre-authorisation. Requires <c>AmountFinal</c> and <c>TransactionReference</c>.</summary>
+	/// <summary>Finalise a prior pre-authorisation. Requires <c>AmountFinal</c> and <c>TransactionReference</c>. NOT YET FULLY SUPPORTED — <see cref="SmartConnectTransactionRequest"/> does not yet carry an <c>AmountFinal</c> field (deferred).</summary>
 	public const string CardFinalise = "Card.Finalise";
 
 	/// <summary>QR purchase where the terminal displays the code (preferred QR mode). Requires <c>AmountTotal</c>.</summary>
