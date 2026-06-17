@@ -471,16 +471,20 @@ is exactly what surfaced the over-broad original line.
   `Journal.GetTransResult`, so it cannot serve as a Layer-2 recovery correlation key (Decision 10's
   2026-06-17 update).
 - **Non-financial operation status mapping:** the financial outcome mapper mis-reported non-financial success
-  as `Failed` (live: `Terminal.GetStatus` `Result=OK`/`Status=READY` → `Failed`). Resolved by giving
-  non-financial operations their own `SmartConnectOperationResult` / `SmartConnectOperationStatus` (Decision 11).
+  as `Failed` (live: `Terminal.GetStatus` `Result=OK`/`Status=READY` → `Failed`). Resolved by giving the genuine
+  non-transaction ops their own `SmartConnectOperationResult` / `SmartConnectOperationStatus`, then **narrowed**
+  (Decision 11 + its 2026-06-17 update): only `Terminal.GetStatus` and the `ExecuteNonFinancialAsync` escape
+  hatch use it; the acquirer ops are transaction-shaped and return `SmartConnectTransactionResult`.
+- **Vendor authentication model — resolved, no credential required.** The auth model is pairing + the
+  registration triple + the per-transaction `merchantAccessToken` (in the polling URL). The documented API has
+  no separate up-front credential, and live dev testing across pairing, transactions, journal, **and all four
+  non-financial ops** worked with none. The production environment hasn't been exercised (no prod access), but
+  the documented API contract is identical and has nowhere to carry an extra credential, so there is nothing
+  environment-specific for the library to implement. `SmartConnectClientConfiguration.AuthorizeRequestAsync`
+  remains as a defensive, non-breaking seam only — not because anything indicates a credential is needed.
 
 ### Still open
 
-- **Vendor authentication model (production onboarding only)** — no separate vendor API key/bearer/certificate
-  is documented, and live dev testing (pairing, transactions, journal) succeeded with only the registration
-  triple + the per-transaction `merchantAccessToken`, so none appears required for API calls. The remaining
-  unknown is whether *production onboarding* issues an extra credential; the configuration keeps a non-breaking
-  seam to add one.
-- **Per-operation non-financial response shapes** — `SmartConnectOperationResult` exposes operation-specific
-  fields via `RawData` only. The live `Terminal.GetStatus` shape is captured; settlement/logon shapes are not
-  yet, so typed accessors are deferred until each is verified (a non-breaking addition when done).
+- **None on the library/design side.** The remaining steps are operational: flip the repo public and set up
+  NuGet publish. (A typed accessor for `Terminal.GetStatus`'s `Status` field — currently `RawData`-only — is an
+  optional, non-breaking future enhancement, not a gap.)
