@@ -20,10 +20,12 @@ public sealed class SaleData : SmartConnectSaleData
 	/// <summary>Invoice reference.</summary>
 	public string? InvoiceNumber { get; set; }
 
-	/// <summary>Sale creation time (serialised ISO 8601 UTC).</summary>
+	/// <summary>Sale creation time. Serialised as ISO 8601 with the value's offset (not normalised) — the vendor
+	/// schema expects UTC, so supply a UTC value.</summary>
 	public DateTimeOffset? CreatedAt { get; set; }
 
-	/// <summary>Sale last-updated time (serialised ISO 8601 UTC).</summary>
+	/// <summary>Sale last-updated time. Serialised as ISO 8601 with the value's offset (not normalised) — the
+	/// vendor schema expects UTC, so supply a UTC value.</summary>
 	public DateTimeOffset? UpdatedAt { get; set; }
 
 	/// <summary>Total amount including tax. Required by the wire schema. Vendor string; encoding unspecified.</summary>

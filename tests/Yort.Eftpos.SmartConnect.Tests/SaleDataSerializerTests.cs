@@ -41,11 +41,23 @@ public class SaleDataSerializerTests
 	}
 
 	[Fact]
-	public void Serialize_OmitsNullMembersAndEmptyCollections()
+	public void Serialize_OmitsNullMembersAndNullCollections()
 	{
 		var sale = Root(SaleDataSerializer.Serialize(new V1.SaleData { TotalAmount = "1.00", TotalTax = "0" })).GetProperty("saleData");
 		Assert.False(sale.TryGetProperty("saleId", out _));     // null -> omitted
 		Assert.False(sale.TryGetProperty("lineItems", out _));  // null collection -> omitted
+	}
+
+	[Fact]
+	public void Serialize_ExplicitEmptyCollection_IsKeptAsEmptyArray()
+	{
+		// Contract: an UNSET (null) collection is omitted (above); an explicitly-assigned empty list is the
+		// caller's choice and serialises as [].
+		var data = new V1.SaleData { TotalAmount = "1", TotalTax = "0", LineItems = new List<V1.LineItem>() };
+		var sale = Root(SaleDataSerializer.Serialize(data)).GetProperty("saleData");
+		Assert.True(sale.TryGetProperty("lineItems", out var items));
+		Assert.Equal(JsonValueKind.Array, items.ValueKind);
+		Assert.Equal(0, items.GetArrayLength());
 	}
 
 	[Fact]
