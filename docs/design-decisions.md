@@ -369,6 +369,62 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
 
 ---
 
+## Decision 11: A distinct result type for non-financial operations
+
+**Status:** Added 2026-06-17 (after a live `Terminal.GetStatus` mis-map was observed).
+
+### Context
+
+Non-financial operations (terminal status, acquirer logon, settlement inquiry/cutover) share the polling
+machinery with financial transactions but have no approve/decline outcome and no money fields. Routing their
+responses through the financial outcome mapper — which keys off a `TransactionResult` code these bodies do not
+carry — mis-reported success as failure: live, `Terminal.GetStatus` returning `Result=OK` / `Status=READY`
+mapped to `SmartConnectTransactionStatus.Failed`.
+
+### Decision
+
+A small result hierarchy:
+
+- `SmartConnectResult` (abstract base) — the common envelope: `TransactionId`, `ResponseTimestamp`, `RawData`.
+- `SmartConnectTransactionResult : SmartConnectResult` — financial (`Status`, `FailureCause`, amounts, card
+  fields, `ReferenceId`, `Receipt`).
+- `SmartConnectOperationResult : SmartConnectResult` — non-financial: `SmartConnectOperationStatus`
+  (`Succeeded` / `Failed` / `Unknown`) + `ErrorMessage`.
+
+Each client method returns its **concrete** derived type — financial methods (incl. `GetLastTransactionResultAsync`,
+which reports a recovered *transaction*) return `SmartConnectTransactionResult`; the four operation methods and
+the `ExecuteNonFinancialAsync` escape hatch return `SmartConnectOperationResult`. The base is never returned, so
+callers never downcast. Operation success is taken from the response's `Result == "OK"`; the payment-critical
+poll loop is left untouched (the conversion happens at the operation methods' boundary).
+
+### Rationale
+
+- A non-financial operation genuinely has its own outcome — and it includes **`Unknown`**, which is
+  load-bearing for the **state-changing settlement cutover** ("it may have executed"). A bool would lose that.
+- A shared base avoids duplicating the envelope and lets internal logging/rendering take one type, while each
+  derived type carries only fields that are meaningful for it.
+- Deriving success from `Result == "OK"` is the signal the terminal actually uses, and leaves the payment hot
+  loop unchanged.
+
+### Trade-offs Accepted
+
+- Breaking change to the four operation methods' return types — free pre-release.
+- Operation-specific fields (a terminal's `Status`, settlement totals) stay in `RawData` until each response
+  shape is verified live; typed accessors can be added later without breaking callers.
+- The financial-shaped internal result is still produced and converted; the internal poll log still records the
+  provisional financial status for these ops (a minor diagnostic wart, not a public-surface issue).
+
+### Options Considered
+
+| Option | Verdict | Reason |
+|---|---|---|
+| **Base + two derived result types** | **Selected** | Each type carries only relevant fields; shared envelope; no downcast |
+| Two unrelated result types | Rejected | Duplicates the envelope and shared rendering for no gain |
+| One type, fix the mapping in place | Rejected | Keeps money fields and a financial outcome enum on non-financial results |
+| `bool Succeeded` instead of a status enum | Rejected | Loses `Unknown` — exactly the case cutover must not drop |
+
+---
+
 ## Decisions Explicitly Deferred
 
 | Topic | Why deferred |
@@ -391,6 +447,9 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
 - **`SaleData` echo:** probed live 2026-06-17 — echoed in the transaction's own completed result, **not** in
   `Journal.GetTransResult`, so it cannot serve as a Layer-2 recovery correlation key (Decision 10's
   2026-06-17 update).
+- **Non-financial operation status mapping:** the financial outcome mapper mis-reported non-financial success
+  as `Failed` (live: `Terminal.GetStatus` `Result=OK`/`Status=READY` → `Failed`). Resolved by giving
+  non-financial operations their own `SmartConnectOperationResult` / `SmartConnectOperationStatus` (Decision 11).
 
 ### Still open
 
@@ -399,8 +458,6 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
   triple + the per-transaction `merchantAccessToken`, so none appears required for API calls. The remaining
   unknown is whether *production onboarding* issues an extra credential; the configuration keeps a non-breaking
   seam to add one.
-- **Non-financial operation status mapping is observed-wrong (pre-release fix)** — `Terminal.GetStatus`
-  returning `Result=OK` / `Status=READY` maps to `SmartConnectTransactionStatus.Failed`, because the outcome
-  mapper is built for financial result codes, not the non-financial response shape. Callers must read
-  `RawData` today. Before release, either map the non-financial shapes correctly (the live `Terminal.GetStatus`
-  shape is now captured) or stop surfacing a misleading `Status` for them. Does not affect the financial path.
+- **Per-operation non-financial response shapes** — `SmartConnectOperationResult` exposes operation-specific
+  fields via `RawData` only. The live `Terminal.GetStatus` shape is captured; settlement/logon shapes are not
+  yet, so typed accessors are deferred until each is verified (a non-breaking addition when done).
