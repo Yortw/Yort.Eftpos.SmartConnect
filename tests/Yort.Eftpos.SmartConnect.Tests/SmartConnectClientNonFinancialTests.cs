@@ -93,11 +93,10 @@ public class SmartConnectClientNonFinancialTests
 		return client;
 	}
 
-	private static Task<SmartConnectOperationResult> InvokeOperation(SmartConnectClient client, string method, SmartConnectRegistration registration)
+	private static Task<SmartConnectTransactionResult> InvokeAcquirer(SmartConnectClient client, string method, SmartConnectRegistration registration)
 	{
 		switch (method)
 		{
-			case "Status": return client.GetTerminalStatusAsync(registration);
 			case "Logon": return client.LogonAsync(registration);
 			case "Inquiry": return client.SettlementInquiryAsync(registration);
 			case "Cutover": return client.SettlementCutoverAsync(registration);
@@ -105,21 +104,37 @@ public class SmartConnectClientNonFinancialTests
 		}
 	}
 
-	[Theory]
-	[InlineData("Status", "Terminal.GetStatus")]
-	[InlineData("Logon", "Acquirer.Logon")]
-	[InlineData("Inquiry", "Acquirer.Settlement.Inquiry")]
-	[InlineData("Cutover", "Acquirer.Settlement.Cutover")]
-	public async Task NonFinancial_SendsRegistrationTripleAndType_AndSucceedsOnResultOk(string method, string expectedWireType)
+	[Fact]
+	public async Task TerminalStatus_SendsTypeAndSucceedsOnResultOk()
 	{
-		// Body has Result=OK but NO TransactionResult — the financial mapper returns Failed here; the operation
-		// mapper must return Succeeded. This pins the fix.
+		// Terminal.GetStatus has the one divergent shape — Result=OK but NO TransactionResult (the financial
+		// mapper would return Failed). It is the one genuine OPERATION result; the operation mapper returns
+		// Succeeded. This pins both the mapping and that Terminal.GetStatus stays a SmartConnectOperationResult.
 		var handler = Handler(OperationOkPollJson);
 		using var client = CreateClient(handler);
 
-		var result = await InvokeOperation(client, method, CreateRegistration());
+		SmartConnectOperationResult result = await client.GetTerminalStatusAsync(CreateRegistration());
 
 		Assert.Equal(SmartConnectOperationStatus.Succeeded, result.Status);
+		Assert.Equal(
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Terminal.GetStatus",
+			handler.Requests[0].Body);
+	}
+
+	[Theory]
+	[InlineData("Logon", "Acquirer.Logon")]
+	[InlineData("Inquiry", "Acquirer.Settlement.Inquiry")]
+	[InlineData("Cutover", "Acquirer.Settlement.Cutover")]
+	public async Task AcquirerOps_SendRegistrationTripleAndType_AndReturnTransactionResult(string method, string expectedWireType)
+	{
+		// Verified live (2026-06-17): Acquirer.Logon / Settlement.* return a transaction-shaped envelope
+		// (TransactionResult=OK-ACCEPTED) and map like a transaction -> SmartConnectTransactionResult (Decision 11).
+		var handler = HappyHandler(); // AcceptedPollJson carries TransactionResult=OK-ACCEPTED.
+		using var client = CreateClient(handler);
+
+		SmartConnectTransactionResult result = await InvokeAcquirer(client, method, CreateRegistration());
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		// Literal expected body (protocol-fake rule).
 		Assert.Equal(
 			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=" + Uri.EscapeDataString(expectedWireType),

@@ -423,6 +423,29 @@ poll loop is left untouched (the conversion happens at the operation methods' bo
 | One type, fix the mapping in place | Rejected | Keeps money fields and a financial outcome enum on non-financial results |
 | `bool Succeeded` instead of a status enum | Rejected | Loses `Unknown` — exactly the case cutover must not drop |
 
+### Update (2026-06-17, later same day) — operation-result line narrowed after live verification
+
+The original decision above routed **all four** non-financial methods to `SmartConnectOperationResult`, generalised
+from the single `Terminal.GetStatus` shape available at the time. Capturing the other three live (against the dev
+PAX S920) corrected that: `Acquirer.Logon`, `Acquirer.Settlement.Inquiry`, and `Acquirer.Settlement.Cutover` all
+return a **transaction-shaped** envelope (`Result=OK`, `TransactionResult=OK-ACCEPTED`, plus `AcquirerRef`/
+`TerminalRef`/`Receipt`) and map cleanly through the financial outcome mapper. Only `Terminal.GetStatus` has the
+divergent shape (`Result=OK`, no `TransactionResult`, a `Status=READY` field) that the financial mapper can't read.
+
+So the line is redrawn:
+
+- **`SmartConnectOperationResult`:** `GetTerminalStatusAsync` (genuine status query) and the `ExecuteNonFinancialAsync`
+  escape hatch (arbitrary types of unknown shape) only.
+- **`SmartConnectTransactionResult`:** `LogonAsync`, `SettlementInquiryAsync`, `SettlementCutoverAsync` join the
+  financial transactions and `GetLastTransactionResultAsync` — they route through the shared core directly (no
+  `ToOperationResult` conversion), so the acquirer reference/receipt come through typed, and the state-changing
+  cutover keeps its load-bearing `Unknown` (now `SmartConnectTransactionStatus.Unknown`). The accepted cost is that
+  these results carry the financial money/card fields unused (empty defaults); the meaningful fields all fit.
+
+This both matches the vendor's model (`Acquirer.*` are documented *transaction types* hitting `POST /Transaction`)
+and simplifies the code. `SmartConnectOperationResult` remains justified by `Terminal.GetStatus`. The verification
+is exactly what surfaced the over-broad original line.
+
 ---
 
 ## Decisions Explicitly Deferred

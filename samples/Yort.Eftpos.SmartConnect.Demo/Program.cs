@@ -100,9 +100,9 @@ internal static class Program
 					case "7": await PairAsync(client).ConfigureAwait(false); break;
 					case "8": await TransportShapeProbeAsync().ConfigureAwait(false); break;
 					case "9": RenderNonFinancial("Terminal.GetStatus", await client.GetTerminalStatusAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
-					case "10": RenderNonFinancial("Acquirer.Settlement.Inquiry", await client.SettlementInquiryAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
+					case "10": RenderResult(await client.SettlementInquiryAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false), "(Acquirer.Settlement.Inquiry)"); break;
 					case "11": await CutoverAsync(client).ConfigureAwait(false); break;
-					case "12": RenderNonFinancial("Acquirer.Logon", await client.LogonAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
+					case "12": RenderResult(await client.LogonAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false), "(Acquirer.Logon)"); break;
 					case "13": await PurchaseWithSaleDataAsync(client).ConfigureAwait(false); break;
 					case "0": return;
 				}
@@ -410,18 +410,18 @@ internal static class Program
 		}
 
 		var result = await client.SettlementCutoverAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false);
-		RenderNonFinancial("Acquirer.Settlement.Cutover", result);
+		RenderResult(result, "(Acquirer.Settlement.Cutover)");
 
-		if (result.Status == SmartConnectOperationStatus.Unknown)
+		if (result.Status == SmartConnectTransactionStatus.Unknown)
 		{
 			Console.WriteLine("CUTOVER OUTCOME UNKNOWN — it MAY have executed. Run Settlement inquiry (menu 10) to");
 			Console.WriteLine("verify before re-issuing; a repeated cutover double-cuts the settlement window.");
 		}
 	}
 
-	// (J3) Non-financial operations return Succeeded/Failed/Unknown (from the response's Result=="OK"); the
-	// operation-specific fields are not yet typed, so the raw fields are rendered verbatim — these feed the
-	// H9 verdict list when a new operation's shape is being confirmed.
+	// (J3) Renders a SmartConnectOperationResult (now only Terminal.GetStatus — the acquirer ops return a
+	// transaction result and render via RenderResult). Status is Succeeded/Failed/Unknown (from Result=="OK");
+	// operation-specific fields aren't typed, so the raw fields are dumped verbatim to confirm an op's shape.
 	private static void RenderNonFinancial(string operation, SmartConnectOperationResult result)
 	{
 		Console.WriteLine();

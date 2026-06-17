@@ -387,13 +387,13 @@ public sealed class SmartConnectClient : IDisposable
 	public Task<SmartConnectOperationResult> GetTerminalStatusAsync(SmartConnectRegistration registration, IProgress<SmartConnectPollingStatus>? progress)
 		=> ExecuteOperationAsync(registration, SmartConnectTransactionType.TerminalGetStatus, progress);
 
-	/// <summary>Performs an acquirer logon (<c>Acquirer.Logon</c>). Read-only/safe to retry; no state-store calls. See the Status remark on <see cref="GetTerminalStatusAsync(SmartConnectRegistration)"/>.</summary>
+	/// <summary>Performs an acquirer logon (<c>Acquirer.Logon</c>). Read-only/safe to retry; no state-store calls. A documented transaction-type operation: it returns a <see cref="SmartConnectTransactionResult"/> mapped like a transaction (the acquirer reference and receipt are populated; the money/card fields are unused). Handle <see cref="SmartConnectTransactionStatus.Unknown"/>.</summary>
 	/// <param name="registration">The registration triple, as used at pairing.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="registration"/> is null.</exception>
 	/// <exception cref="ArgumentException">A mandatory field of <paramref name="registration"/> is blank.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
 	/// <exception cref="SmartConnectTransportException">The POST could not be completed.</exception>
-	public Task<SmartConnectOperationResult> LogonAsync(SmartConnectRegistration registration)
+	public Task<SmartConnectTransactionResult> LogonAsync(SmartConnectRegistration registration)
 		=> LogonAsync(registration, null);
 
 	/// <summary>Performs an acquirer logon, with progress reporting. See <see cref="LogonAsync(SmartConnectRegistration)"/>.</summary>
@@ -403,16 +403,16 @@ public sealed class SmartConnectClient : IDisposable
 	/// <exception cref="ArgumentException">A mandatory field of <paramref name="registration"/> is blank.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
 	/// <exception cref="SmartConnectTransportException">The POST could not be completed.</exception>
-	public Task<SmartConnectOperationResult> LogonAsync(SmartConnectRegistration registration, IProgress<SmartConnectPollingStatus>? progress)
-		=> ExecuteOperationAsync(registration, SmartConnectTransactionType.AcquirerLogon, progress);
+	public Task<SmartConnectTransactionResult> LogonAsync(SmartConnectRegistration registration, IProgress<SmartConnectPollingStatus>? progress)
+		=> ExecuteNonFinancialCoreAsync(registration, SmartConnectTransactionType.AcquirerLogon, progress);
 
-	/// <summary>Queries the current settlement totals (<c>Acquirer.Settlement.Inquiry</c>). Read-only/safe to retry; no state-store calls. Settlement shares the client-wide <see cref="SmartConnectClientConfiguration.MaxPollDuration"/> budget. See the Status remark on <see cref="GetTerminalStatusAsync(SmartConnectRegistration)"/>.</summary>
+	/// <summary>Queries the current settlement totals (<c>Acquirer.Settlement.Inquiry</c>). Read-only/safe to retry; no state-store calls. Settlement shares the client-wide <see cref="SmartConnectClientConfiguration.MaxPollDuration"/> budget. A documented transaction-type operation: it returns a <see cref="SmartConnectTransactionResult"/> mapped like a transaction (the totals are in the receipt; the money/card fields are unused). Handle <see cref="SmartConnectTransactionStatus.Unknown"/>.</summary>
 	/// <param name="registration">The registration triple, as used at pairing.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="registration"/> is null.</exception>
 	/// <exception cref="ArgumentException">A mandatory field of <paramref name="registration"/> is blank.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
 	/// <exception cref="SmartConnectTransportException">The POST could not be completed.</exception>
-	public Task<SmartConnectOperationResult> SettlementInquiryAsync(SmartConnectRegistration registration)
+	public Task<SmartConnectTransactionResult> SettlementInquiryAsync(SmartConnectRegistration registration)
 		=> SettlementInquiryAsync(registration, null);
 
 	/// <summary>Queries the current settlement totals, with progress reporting. See <see cref="SettlementInquiryAsync(SmartConnectRegistration)"/>.</summary>
@@ -422,14 +422,14 @@ public sealed class SmartConnectClient : IDisposable
 	/// <exception cref="ArgumentException">A mandatory field of <paramref name="registration"/> is blank.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
 	/// <exception cref="SmartConnectTransportException">The POST could not be completed.</exception>
-	public Task<SmartConnectOperationResult> SettlementInquiryAsync(SmartConnectRegistration registration, IProgress<SmartConnectPollingStatus>? progress)
-		=> ExecuteOperationAsync(registration, SmartConnectTransactionType.AcquirerSettlementInquiry, progress);
+	public Task<SmartConnectTransactionResult> SettlementInquiryAsync(SmartConnectRegistration registration, IProgress<SmartConnectPollingStatus>? progress)
+		=> ExecuteNonFinancialCoreAsync(registration, SmartConnectTransactionType.AcquirerSettlementInquiry, progress);
 
 	/// <summary>
 	/// Performs a settlement cutover (<c>Acquirer.Settlement.Cutover</c>) — closes the acquirer settlement
 	/// window. <b>STATE-CHANGING, not idempotent:</b> on a <see cref="SmartConnectTransportException"/> with
 	/// <see cref="SmartConnectRequestDelivery.Unknown"/>, or a result of
-	/// <see cref="SmartConnectOperationStatus.Unknown"/>, the cutover MAY have executed — verify via
+	/// <see cref="SmartConnectTransactionStatus.Unknown"/>, the cutover MAY have executed — verify via
 	/// <see cref="SettlementInquiryAsync(SmartConnectRegistration)"/> before re-issuing; never blind-retry.
 	/// Makes no state-store calls. Settlement shares the client-wide poll budget.
 	/// </summary>
@@ -438,7 +438,7 @@ public sealed class SmartConnectClient : IDisposable
 	/// <exception cref="ArgumentException">A mandatory field of <paramref name="registration"/> is blank.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
 	/// <exception cref="SmartConnectTransportException">The POST could not be completed — see the Unknown-delivery caveat above.</exception>
-	public Task<SmartConnectOperationResult> SettlementCutoverAsync(SmartConnectRegistration registration)
+	public Task<SmartConnectTransactionResult> SettlementCutoverAsync(SmartConnectRegistration registration)
 		=> SettlementCutoverAsync(registration, null);
 
 	/// <summary>Performs a settlement cutover, with progress reporting. See <see cref="SettlementCutoverAsync(SmartConnectRegistration)"/> — STATE-CHANGING; read its retry caveat.</summary>
@@ -448,8 +448,8 @@ public sealed class SmartConnectClient : IDisposable
 	/// <exception cref="ArgumentException">A mandatory field of <paramref name="registration"/> is blank.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
 	/// <exception cref="SmartConnectTransportException">The POST could not be completed — see the cutover retry caveat.</exception>
-	public Task<SmartConnectOperationResult> SettlementCutoverAsync(SmartConnectRegistration registration, IProgress<SmartConnectPollingStatus>? progress)
-		=> ExecuteOperationAsync(registration, SmartConnectTransactionType.AcquirerSettlementCutover, progress);
+	public Task<SmartConnectTransactionResult> SettlementCutoverAsync(SmartConnectRegistration registration, IProgress<SmartConnectPollingStatus>? progress)
+		=> ExecuteNonFinancialCoreAsync(registration, SmartConnectTransactionType.AcquirerSettlementCutover, progress);
 
 	/// <summary>
 	/// Sends an arbitrary NON-FINANCIAL transaction type — the escape hatch for vendor types this library
