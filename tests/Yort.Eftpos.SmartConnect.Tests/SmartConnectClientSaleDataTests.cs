@@ -56,8 +56,8 @@ public class SmartConnectClientSaleDataTests
 	};
 
 	// Extracts a form field's raw (still URL-encoded) value from an application/x-www-form-urlencoded body.
-	private static string? FormField(string body, string key)
-		=> body.Split('&').Where(p => p.StartsWith(key + "=")).Select(p => p.Substring(key.Length + 1)).FirstOrDefault();
+	private static string? FormField(string? body, string key)
+		=> body?.Split('&').Where(p => p.StartsWith(key + "=")).Select(p => p.Substring(key.Length + 1)).FirstOrDefault();
 
 	[Fact]
 	public async Task NoSaleData_OmitsTheField()
