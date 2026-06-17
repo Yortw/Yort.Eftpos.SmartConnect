@@ -1,12 +1,12 @@
-using System.Collections.Generic;
-
 namespace Yort.Eftpos.SmartConnect;
 
 /// <summary>
-/// The outcome and details of a completed (or abandoned) transaction. Amounts are authoritative in minor
-/// units (cents); the <see cref="decimal"/> convenience properties expose them as dollars.
+/// The outcome and details of a completed (or abandoned) financial transaction. Amounts are authoritative in
+/// minor units (cents); use <see cref="Money.ToDecimal"/> when you need dollars. Common envelope fields
+/// (<see cref="SmartConnectResult.TransactionId"/>, <see cref="SmartConnectResult.RawData"/>, etc.) are on the
+/// base type.
 /// </summary>
-public sealed class SmartConnectTransactionResult
+public sealed class SmartConnectTransactionResult : SmartConnectResult
 {
 	/// <summary>The terminal outcome. Always handle <see cref="SmartConnectTransactionStatus.Unknown"/> explicitly.</summary>
 	public SmartConnectTransactionStatus Status { get; init; } = SmartConnectTransactionStatus.Unknown;
@@ -18,19 +18,12 @@ public sealed class SmartConnectTransactionResult
 	public SmartConnectFailureCause FailureCause { get; init; } = SmartConnectFailureCause.None;
 
 	/// <summary>
-	/// The server-issued id of <em>this</em> exchange. For a normal transaction this is the transaction's own
-	/// id; on the Layer-2 recovery path (<see cref="SmartConnectClient.GetLastTransactionResultAsync(SmartConnectRegistration)"/>,
-	/// i.e. <c>Journal.GetTransResult</c>) it is the id of the <em>query</em>, not of the transaction being
-	/// reported — see <see cref="ReferenceId"/> for the reported transaction's id.
-	/// </summary>
-	public string? TransactionId { get; init; }
-
-	/// <summary>
-	/// The id of the transaction actually being <em>reported</em>, when it differs from <see cref="TransactionId"/>.
-	/// Populated from the response's <c>ReferenceId</c> field, which <c>Journal.GetTransResult</c> uses to carry
-	/// the recovered (last) transaction's id while the envelope id identifies the journal query itself
-	/// (ADR Decision 10, verified 2026-06-16). Null on the normal transaction path, where
-	/// <see cref="TransactionId"/> already identifies the transaction.
+	/// The id of the transaction actually being <em>reported</em>, when it differs from
+	/// <see cref="SmartConnectResult.TransactionId"/>. Populated from the response's <c>ReferenceId</c> field,
+	/// which <c>Journal.GetTransResult</c> uses to carry the recovered (last) transaction's id while the
+	/// envelope <see cref="SmartConnectResult.TransactionId"/> identifies the journal query itself (ADR
+	/// Decision 10, verified 2026-06-16). Null on the normal transaction path, where
+	/// <see cref="SmartConnectResult.TransactionId"/> already identifies the transaction.
 	/// </summary>
 	public string? ReferenceId { get; init; }
 
@@ -66,13 +59,4 @@ public sealed class SmartConnectTransactionResult
 	/// context; do not attempt to parse it into fields.
 	/// </summary>
 	public string? Receipt { get; init; }
-
-	/// <summary>
-	/// The raw response timestamp string. This is a non-ISO, vendor-specific format — treat as opaque and do
-	/// not parse it.
-	/// </summary>
-	public string? ResponseTimestamp { get; init; }
-
-	/// <summary>Any response fields not mapped to a strongly-typed property, for diagnostics.</summary>
-	public IReadOnlyDictionary<string, string>? RawData { get; init; }
 }

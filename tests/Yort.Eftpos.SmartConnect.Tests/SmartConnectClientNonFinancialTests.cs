@@ -14,9 +14,12 @@ namespace Yort.Eftpos.SmartConnect.Tests;
 
 /// <summary>
 /// Tests for the non-financial operation APIs (Task 12.7). The boundary: money → sentinel + never-throws
-/// results (<c>ProcessTransactionAsync</c>); not-money → ZERO state-store calls + typed transport throws on
-/// the POST, result-based polling. The escape hatch rejects the library's own financial type names (J2 —
-/// the F5-bypass guard) while passing genuinely unknown strings through.
+/// results (<c>ProcessTransactionAsync</c>); not-money → ZERO state-store calls + typed transport throws on the
+/// POST, result-based polling. Non-financial operations return <see cref="SmartConnectOperationResult"/>
+/// (<see cref="SmartConnectOperationStatus"/> from the response's <c>Result == "OK"</c>); the journal query
+/// returns a financial <see cref="SmartConnectTransactionResult"/> (it reports a recovered transaction). The
+/// escape hatch rejects the library's own financial type names (J2 — the F5-bypass guard) while passing
+/// genuinely unknown strings through.
 /// </summary>
 public class SmartConnectClientNonFinancialTests
 {
@@ -30,19 +33,32 @@ public class SmartConnectClientNonFinancialTests
 		"{\"transactionId\": \"txn-1\", \"transactionStatus\": \"COMPLETED\", " +
 		"\"data\": {\"TransactionResult\": \"OK-ACCEPTED\", \"Result\": \"OK\"}}";
 
+	// The genuine non-financial COMPLETED shape: NO TransactionResult code, just Result=OK plus operation-
+	// specific fields (mirrors the live Terminal.GetStatus response). The financial mapper would map this to
+	// Failed; the operation mapper must read Result=="OK" and report Succeeded.
+	private const string OperationOkPollJson =
+		"{\"transactionId\": \"txn-1\", \"transactionStatus\": \"COMPLETED\", " +
+		"\"data\": {\"Result\": \"OK\", \"Status\": \"READY\"}}";
+
+	private const string OperationFailedPollJson =
+		"{\"transactionId\": \"txn-1\", \"transactionStatus\": \"COMPLETED\", " +
+		"\"data\": {\"Result\": \"FAILED\"}}";
+
 	private static HttpResponseMessage Json(HttpStatusCode status, string json)
 		=> new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
-	/// <summary>First request gets the initial POST response; later requests get the accepted poll.</summary>
-	private static MockHttpHandler HappyHandler()
+	/// <summary>First request gets the initial POST response; later requests get <paramref name="completedPollJson"/>.</summary>
+	private static MockHttpHandler Handler(string completedPollJson)
 	{
 		var index = -1;
 		return new MockHttpHandler(_ =>
 		{
 			var i = Interlocked.Increment(ref index);
-			return Task.FromResult(Json(HttpStatusCode.OK, i == 0 ? InitialResponseJson : AcceptedPollJson));
+			return Task.FromResult(Json(HttpStatusCode.OK, i == 0 ? InitialResponseJson : completedPollJson));
 		});
 	}
+
+	private static MockHttpHandler HappyHandler() => Handler(AcceptedPollJson);
 
 	private static SmartConnectRegistration CreateRegistration()
 	{
@@ -77,7 +93,7 @@ public class SmartConnectClientNonFinancialTests
 		return client;
 	}
 
-	private static Task<SmartConnectTransactionResult> Invoke(SmartConnectClient client, string method, SmartConnectRegistration registration)
+	private static Task<SmartConnectOperationResult> InvokeOperation(SmartConnectClient client, string method, SmartConnectRegistration registration)
 	{
 		switch (method)
 		{
@@ -85,7 +101,6 @@ public class SmartConnectClientNonFinancialTests
 			case "Logon": return client.LogonAsync(registration);
 			case "Inquiry": return client.SettlementInquiryAsync(registration);
 			case "Cutover": return client.SettlementCutoverAsync(registration);
-			case "Journal": return client.GetLastTransactionResultAsync(registration);
 			default: throw new ArgumentOutOfRangeException(nameof(method));
 		}
 	}
@@ -95,19 +110,48 @@ public class SmartConnectClientNonFinancialTests
 	[InlineData("Logon", "Acquirer.Logon")]
 	[InlineData("Inquiry", "Acquirer.Settlement.Inquiry")]
 	[InlineData("Cutover", "Acquirer.Settlement.Cutover")]
-	[InlineData("Journal", "Journal.GetTransResult")]
-	public async Task NonFinancial_SendsRegistrationTripleAndCorrectType(string method, string expectedWireType)
+	public async Task NonFinancial_SendsRegistrationTripleAndType_AndSucceedsOnResultOk(string method, string expectedWireType)
 	{
-		var handler = HappyHandler();
+		// Body has Result=OK but NO TransactionResult — the financial mapper returns Failed here; the operation
+		// mapper must return Succeeded. This pins the fix.
+		var handler = Handler(OperationOkPollJson);
 		using var client = CreateClient(handler);
 
-		var result = await Invoke(client, method, CreateRegistration());
+		var result = await InvokeOperation(client, method, CreateRegistration());
 
-		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Equal(SmartConnectOperationStatus.Succeeded, result.Status);
 		// Literal expected body (protocol-fake rule).
 		Assert.Equal(
 			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=" + Uri.EscapeDataString(expectedWireType),
 			handler.Requests[0].Body);
+	}
+
+	[Fact]
+	public async Task Journal_SendsCorrectTypeAndReturnsFinancialResult()
+	{
+		// The journal query routes through the same core but reports a recovered TRANSACTION, so it keeps the
+		// financial result shape and outcome enum.
+		var handler = HappyHandler();
+		using var client = CreateClient(handler);
+
+		SmartConnectTransactionResult result = await client.GetLastTransactionResultAsync(CreateRegistration());
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.EndsWith("&TransactionType=Journal.GetTransResult", handler.Requests[0].Body);
+	}
+
+	[Fact]
+	public async Task NonFinancial_ResultNotOk_IsFailedNotSucceeded()
+	{
+		// The requirement, not the mechanism: a COMPLETED non-financial body whose Result is NOT "OK" must NOT
+		// be reported as success.
+		var handler = Handler(OperationFailedPollJson);
+		using var client = CreateClient(handler);
+
+		var result = await client.GetTerminalStatusAsync(CreateRegistration());
+
+		Assert.Equal(SmartConnectOperationStatus.Failed, result.Status);
+		Assert.NotNull(result.ErrorMessage);
 	}
 
 	[Fact]
@@ -165,11 +209,11 @@ public class SmartConnectClientNonFinancialTests
 			ThrowOnUpdatePollingDetails = new InvalidOperationException("no store calls"),
 			ThrowOnUpdateCompleted = new InvalidOperationException("no store calls")
 		};
-		using var client = CreateClient(HappyHandler(), store);
+		using var client = CreateClient(Handler(OperationOkPollJson), store);
 
 		var result = await client.GetTerminalStatusAsync(CreateRegistration());
 
-		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Equal(SmartConnectOperationStatus.Succeeded, result.Status);
 		Assert.Empty(store.CallLog);
 	}
 
@@ -185,8 +229,10 @@ public class SmartConnectClientNonFinancialTests
 	}
 
 	[Fact]
-	public async Task NonFinancial_PollPhase_StaysResultBased()
+	public async Task NonFinancial_PollUrlRejected_IsUnknown()
 	{
+		// An invalid/expired polling URL means the operation outcome cannot be retrieved -> Unknown (the
+		// financial path's PollingUrlInvalid maps onto the operation's Unknown).
 		var posted = 0;
 		var handler = new MockHttpHandler(request =>
 		{
@@ -203,26 +249,27 @@ public class SmartConnectClientNonFinancialTests
 		var result = await client.GetTerminalStatusAsync(CreateRegistration());
 
 		Assert.Equal(1, posted);
-		Assert.Equal(SmartConnectFailureCause.PollingUrlInvalid, result.FailureCause);
+		Assert.Equal(SmartConnectOperationStatus.Unknown, result.Status);
 	}
 
 	[Theory]
 	[InlineData(HttpStatusCode.Unauthorized)]
 	[InlineData(HttpStatusCode.InternalServerError)]
-	public async Task NonFinancial_NonSuccessPost_ReturnsServiceError_ParityWithJournal(HttpStatusCode status)
+	public async Task NonSuccessPost_OperationFailed_JournalServiceError(HttpStatusCode status)
 	{
-		// (J8) 401-unpaired is the demo's literal first probe on a fresh install. Parity with the journal
-		// query's behaviour doubles as proof the methods route through the shared core, not a copy.
+		// (J8) 401-unpaired is the demo's literal first probe on a fresh install. Both route through the shared
+		// core, but surface in their own shapes: the operation as Failed (+ ErrorMessage), the journal as the
+		// financial Failed/ServiceError.
 		var handler = new MockHttpHandler(_ => Task.FromResult(Json(status, "{\"error\": \"not paired\"}")));
 		using var client = CreateClient(handler);
 
-		var statusResult = await client.GetTerminalStatusAsync(CreateRegistration());
+		var operationResult = await client.GetTerminalStatusAsync(CreateRegistration());
 		var journalResult = await client.GetLastTransactionResultAsync(CreateRegistration());
 
-		Assert.Equal(SmartConnectTransactionStatus.Failed, statusResult.Status);
-		Assert.Equal(SmartConnectFailureCause.ServiceError, statusResult.FailureCause);
-		Assert.Equal(journalResult.Status, statusResult.Status);
-		Assert.Equal(journalResult.FailureCause, statusResult.FailureCause);
+		Assert.Equal(SmartConnectOperationStatus.Failed, operationResult.Status);
+		Assert.NotNull(operationResult.ErrorMessage);
+		Assert.Equal(SmartConnectTransactionStatus.Failed, journalResult.Status);
+		Assert.Equal(SmartConnectFailureCause.ServiceError, journalResult.FailureCause);
 	}
 
 	[Fact]

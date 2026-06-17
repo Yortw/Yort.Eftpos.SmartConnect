@@ -346,34 +346,28 @@ internal static class Program
 		var result = await client.SettlementCutoverAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false);
 		RenderNonFinancial("Acquirer.Settlement.Cutover", result);
 
-		if (result.Status == SmartConnectTransactionStatus.Unknown)
+		if (result.Status == SmartConnectOperationStatus.Unknown)
 		{
 			Console.WriteLine("CUTOVER OUTCOME UNKNOWN — it MAY have executed. Run Settlement inquiry (menu 10) to");
 			Console.WriteLine("verify before re-issuing; a repeated cutover double-cuts the settlement window.");
 		}
 	}
 
-	// (J3) Non-financial response shapes are UNVERIFIED — the mapped Status is provisional, so the raw
-	// fields are rendered verbatim; these feed the H9 verdict list.
-	private static void RenderNonFinancial(string operation, SmartConnectTransactionResult result)
+	// (J3) Non-financial operations return Succeeded/Failed/Unknown (from the response's Result=="OK"); the
+	// operation-specific fields are not yet typed, so the raw fields are rendered verbatim — these feed the
+	// H9 verdict list when a new operation's shape is being confirmed.
+	private static void RenderNonFinancial(string operation, SmartConnectOperationResult result)
 	{
 		Console.WriteLine();
-		Console.WriteLine($"{operation}: mapped Status = {result.Status} (PROVISIONAL mapping)   FailureCause: {result.FailureCause}");
+		Console.WriteLine($"{operation}: Status = {result.Status}"
+			+ (string.IsNullOrEmpty(result.ErrorMessage) ? string.Empty : $"   Error: {result.ErrorMessage}"));
 		Console.WriteLine($"TransactionId: {result.TransactionId}");
 		RenderRawData(result);
-
-		if (!string.IsNullOrEmpty(result.Receipt))
-		{
-			Console.WriteLine("--- receipt ---");
-			Console.WriteLine(result.Receipt);
-			Console.WriteLine("---------------");
-		}
-
-		Transcript($"NONFIN {operation} status={result.Status} cause={result.FailureCause} txnId={result.TransactionId} raw={RedactToken(RawDataLine(result))}");
+		Transcript($"NONFIN {operation} status={result.Status} error={result.ErrorMessage} txnId={result.TransactionId} raw={RedactToken(RawDataLine(result))}");
 		Console.WriteLine("Record the response-shape verdict (raw fields above) in the ADR open-questions table.");
 	}
 
-	private static void RenderRawData(SmartConnectTransactionResult result)
+	private static void RenderRawData(SmartConnectResult result)
 	{
 		if (result.RawData == null || result.RawData.Count == 0)
 		{
@@ -388,7 +382,7 @@ internal static class Program
 		}
 	}
 
-	private static string RawDataLine(SmartConnectTransactionResult result)
+	private static string RawDataLine(SmartConnectResult result)
 	{
 		if (result.RawData == null)
 		{
