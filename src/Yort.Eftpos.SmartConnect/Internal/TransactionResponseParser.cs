@@ -165,7 +165,18 @@ internal static class TransactionResponseParser
 			return default;
 		}
 
-		return JsonSerializer.Deserialize<Money>(value.GetRawText());
+		try
+		{
+			return JsonSerializer.Deserialize<Money>(value.GetRawText());
+		}
+		catch (JsonException)
+		{
+			// A malformed/empty amount must not discard an otherwise-complete outcome. Without this, a COMPLETED
+			// body with a bad AmountTotal would throw, the poll loop would treat it as a garbled response, and a
+			// real Accepted/Declined would degrade to Unknown after spinning to MaxPollDuration. Default the
+			// amount instead — the Status still surfaces, and the raw value remains in RawData for diagnostics.
+			return default;
+		}
 	}
 
 	private static IReadOnlyDictionary<string, string> ReadRawData(JsonElement data)
@@ -178,7 +189,8 @@ internal static class TransactionResponseParser
 				: property.Value.GetRawText();
 		}
 
-		return dictionary;
+		// Wrap so the exposed IReadOnlyDictionary can't be cast back to the mutable Dictionary by a consumer.
+		return new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(dictionary);
 	}
 
 	private static bool Eq(string? actual, string expected) => string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);

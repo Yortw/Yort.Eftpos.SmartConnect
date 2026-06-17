@@ -140,6 +140,22 @@ public class TransactionResponseParserTests
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, poll.Result!.Status);
 	}
 
+	// A COMPLETED accept with a MALFORMED amount must not be lost: the amount defaults, the outcome still
+	// surfaces. (Otherwise the parse throws, the poll loop treats it as garbled, and a real Accepted degrades
+	// to Unknown after spinning to timeout.)
+	[Fact]
+	public void ParsePoll_CompletedWithMalformedAmount_StillSurfacesStatus()
+	{
+		var json = @"{
+			""transactionStatus"": ""COMPLETED"",
+			""data"": { ""TransactionResult"": ""OK-ACCEPTED"", ""Result"": ""OK"", ""AmountTotal"": """" }
+		}";
+		var poll = TransactionResponseParser.ParsePollResponse(json);
+		Assert.Equal(PollProgress.Completed, poll.Progress);
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, poll.Result!.Status);
+		Assert.Equal(0, poll.Result.AmountTotal.ToCents());
+	}
+
 	// F10: malformed JSON throws (the client routes this as transient and retries within the timeout).
 	[Fact]
 	public void ParsePoll_MalformedJson_Throws()
