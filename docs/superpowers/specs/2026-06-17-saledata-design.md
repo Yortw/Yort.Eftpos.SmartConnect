@@ -66,7 +66,7 @@ public sealed class SaleData : SmartConnectSaleData
     public string? UserName { get; set; }
     public string? CustomerId { get; set; }
     public string? CustomerName { get; set; }
-    public IList<LineItem> LineItems { get; set; } = new List<LineItem>();
+    public IList<LineItem>? LineItems { get; set; }   // null (default) → field omitted from the wire
 }
 
 public sealed class LineItem
@@ -76,7 +76,7 @@ public sealed class LineItem
     public string? ProductId { get; set; }
     public string? ProductName { get; set; }        // required by the wire schema
     public string? ProductDescription { get; set; }
-    public IList<Category> Categories { get; set; } = new List<Category>();
+    public IList<Category>? Categories { get; set; }  // null (default) → field omitted from the wire
     public string? BrandId { get; set; }
     public string? BrandName { get; set; }
     public string? Quantity { get; set; }           // required; string (not int/decimal)
@@ -115,6 +115,10 @@ who must step outside our schema derive from `SmartConnectSaleData` (set their o
 library serialises the **runtime** type, so their fields go out. `object?` would buy nothing extra and lose all
 signal of intent.
 
+The library does **not** validate the *content* of the amount/quantity strings (their encoding is unspecified —
+see "Open / unverified"); it passes them through verbatim. The request-property `///` says so, so the absence of
+validation is discoverable at the call site.
+
 ## Wire format & serialisation
 
 The `SaleData` form field on `POST /Transaction` carries a URL-encoded serialised JSON envelope:
@@ -132,9 +136,13 @@ The `SaleData` form field on `POST /Transaction` carries a URL-encoded serialise
   test.**
 - camelCase property naming (`JsonNamingPolicy.CamelCase` maps `TotalAmount`→`totalAmount`, `LineItems`→
   `lineItems`, etc.); `DateTimeOffset` → ISO 8601; null members omitted (`DefaultIgnoreCondition =
-  WhenWritingNull`). **Empty `LineItems`/`Categories` collections are omitted from the JSON** (no `"lineItems":[]`
-  key) — mechanism (null-default vs a custom condition) is an implementation choice, but the observable contract
-  is "absent when empty".
+  WhenWritingNull`). Collections are **null by default**, so an *unset* `LineItems`/`Categories` is omitted from
+  the JSON entirely (no `"lineItems":[]`); a caller who explicitly assigns an empty list gets `[]` (their choice).
+- **SaleData is serialised up front, before the recovery sentinel is written.** A caller-supplied
+  `SmartConnectSaleData` whose runtime type cannot be serialised (a non-serialisable property or reference cycle
+  on a third-party derived type) throws `ArgumentException` from `ProcessTransactionAsync` *before* any sentinel
+  is persisted or any HTTP request is made — bad caller input throws (per Decision 9); it never leaves a dangling
+  sentinel or a half-sent transaction. The V1 types are always serialisable.
 - Added to the POST body only when `request.SaleData != null`; the existing financial path (amounts, sentinel,
   poll loop) is otherwise untouched.
 
@@ -159,10 +167,17 @@ The `SaleData` form field on `POST /Transaction` carries a URL-encoded serialise
   nested categories round-trip into the JSON.
 - **Third-party derived type:** a custom `SmartConnectSaleData` subclass serialises its own properties and its
   own `Version`.
+- **Hostile string content:** a string field containing `&`, `=`, `%`, `"`, a control char and non-ASCII unicode
+  round-trips intact through JSON-escape + URL-encode (parse the URL-decoded `SaleData` field back to the exact
+  original), and the form body still splits correctly on `&`/`=`. (Wire-correctness, not cosmetics.)
+- **Unserialisable SaleData:** a derived type that fails to serialise causes `ProcessTransactionAsync` to throw
+  `ArgumentException` with **zero** HTTP requests and **no** sentinel persisted.
 
 ## Open / unverified
 
 - **Monetary encoding is undocumented.** Mitigated by exposing amounts as `string` (we never interpret them). If
   the format is later confirmed with Shift4 / via a receipt, typed convenience (e.g. `Money`/`decimal` overloads)
   can be added without breaking callers.
+- **SaleData size is unbounded by the library.** A large line-item payload URL-encodes onto a single form field;
+  the host's request-body / field-length limits are unverified and not enforced here — caller's responsibility.
 - The demo SaleData wiring is illustrative; production line-item construction is the consumer's concern.
