@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Yort.Eftpos.SmartConnect;
+using SaleDataV1 = Yort.Eftpos.SmartConnect.SaleData.V1;
 
 namespace Yort.Eftpos.SmartConnect.Demo;
 
@@ -80,6 +81,8 @@ internal static class Program
 			Console.WriteLine(" 9) Terminal status (is the cloud able to reach the pinpad?)");
 			Console.WriteLine("10) Settlement inquiry (read-only)");
 			Console.WriteLine("11) Settlement CUTOVER (state-changing!)");
+			Console.WriteLine("12) Acquirer logon");
+			Console.WriteLine("13) Purchase + sample SaleData (illustrative)");
 			Console.WriteLine(" 0) Quit");
 			Console.Write("> ");
 
@@ -99,6 +102,8 @@ internal static class Program
 					case "9": RenderNonFinancial("Terminal.GetStatus", await client.GetTerminalStatusAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
 					case "10": RenderNonFinancial("Acquirer.Settlement.Inquiry", await client.SettlementInquiryAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
 					case "11": await CutoverAsync(client).ConfigureAwait(false); break;
+					case "12": RenderNonFinancial("Acquirer.Logon", await client.LogonAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false)); break;
+					case "13": await PurchaseWithSaleDataAsync(client).ConfigureAwait(false); break;
 					case "0": return;
 				}
 			}
@@ -181,6 +186,67 @@ internal static class Program
 			POSBusinessName = _settings.BusinessName!,
 			POSVendorName = _settings.VendorName!,
 			ClientTransactionRef = clientTransactionRef
+		}, new ConsoleProgress()).ConfigureAwait(false);
+
+		RenderResult(result, clientTransactionRef);
+	}
+
+	// Illustrative: how an integrator builds a typed SaleData (line items + a category) and attaches it to a
+	// purchase. SaleData is descriptive metadata only — request-only, not echoed back, not a recovery aid. The
+	// amount fields are vendor strings of unspecified encoding (the library does not interpret them); here they
+	// mirror the AmountTotal as a plain decimal string.
+	private static async Task PurchaseWithSaleDataAsync(SmartConnectClient client)
+	{
+		var amountTotal = PromptAmount("Total amount (e.g. 5.00): ");
+		if (amountTotal == null)
+		{
+			return;
+		}
+
+		Console.WriteLine($"Card.Purchase + sample SaleData: AmountTotal = {amountTotal.Value.ToDecimal():0.00} ({amountTotal.Value.ToCents()} cents)");
+		Console.Write("This sends a REAL transaction to the connected pinpad. Proceed? (y/N): ");
+		if (!string.Equals(Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+		{
+			Console.WriteLine("Cancelled before send.");
+			return;
+		}
+
+		var totalText = amountTotal.Value.ToDecimal().ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+		var saleData = new SaleDataV1.SaleData
+		{
+			SaleId = "demo-sale-" + DateTime.Now.ToString("yyyyMMddHHmmss"),
+			TotalAmount = totalText,
+			TotalTax = "0.00",
+			LineItems = new List<SaleDataV1.LineItem>
+			{
+				new SaleDataV1.LineItem
+				{
+					ProductName = "Demo item",
+					Quantity = "1",
+					UnitPrice = totalText,
+					UnitTax = "0.00",
+					TotalPrice = totalText,
+					TotalTax = "0.00",
+					Categories = new List<SaleDataV1.Category>
+					{
+						new SaleDataV1.Category { CategoryName = "Demo" }
+					}
+				}
+			}
+		};
+
+		var clientTransactionRef = "demo-saledata-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+		Transcript($"SEND Card.Purchase+SaleData ref={clientTransactionRef} total={amountTotal.Value.ToCents()}c");
+
+		var result = await client.ProcessTransactionAsync(new SmartConnectTransactionRequest
+		{
+			TransactionType = SmartConnectTransactionType.CardPurchase,
+			AmountTotal = amountTotal.Value,
+			POSRegisterID = _settings.RegisterId!,
+			POSBusinessName = _settings.BusinessName!,
+			POSVendorName = _settings.VendorName!,
+			ClientTransactionRef = clientTransactionRef,
+			SaleData = saleData
 		}, new ConsoleProgress()).ConfigureAwait(false);
 
 		RenderResult(result, clientTransactionRef);
