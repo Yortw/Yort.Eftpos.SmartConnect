@@ -15,6 +15,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "samples", "samples", "{5D20
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yort.Eftpos.SmartConnect.Demo", "samples\Yort.Eftpos.SmartConnect.Demo\Yort.Eftpos.SmartConnect.Demo.csproj", "{3FF94FBB-3253-45BE-8A00-510379370604}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yort.Eftpos.SmartConnect.WinForms", "src\Yort.Eftpos.SmartConnect.WinForms\Yort.Eftpos.SmartConnect.WinForms.csproj", "{7385F20C-CAEA-4804-A706-AEE1E894E1B4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yort.Eftpos.SmartConnect.WinForms.Tests", "tests\Yort.Eftpos.SmartConnect.WinForms.Tests\Yort.Eftpos.SmartConnect.WinForms.Tests.csproj", "{E039474D-4AF8-47EC-94EB-287471C0DD2E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -61,6 +65,30 @@ Global
 		{3FF94FBB-3253-45BE-8A00-510379370604}.Release|x64.Build.0 = Release|Any CPU
 		{3FF94FBB-3253-45BE-8A00-510379370604}.Release|x86.ActiveCfg = Release|Any CPU
 		{3FF94FBB-3253-45BE-8A00-510379370604}.Release|x86.Build.0 = Release|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Debug|x64.Build.0 = Debug|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Debug|x86.Build.0 = Debug|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Release|x64.ActiveCfg = Release|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Release|x64.Build.0 = Release|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Release|x86.ActiveCfg = Release|Any CPU
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4}.Release|x86.Build.0 = Release|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Debug|x64.Build.0 = Debug|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Debug|x86.Build.0 = Debug|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Release|x64.ActiveCfg = Release|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Release|x64.Build.0 = Release|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Release|x86.ActiveCfg = Release|Any CPU
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -69,5 +97,7 @@ Global
 		{B5412212-8DCB-4332-9288-6497A8788500} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{AD9A295F-1679-43F6-8420-6411BABDAE56} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{3FF94FBB-3253-45BE-8A00-510379370604} = {5D20AA90-6969-D8BD-9DCD-8634F4692FDA}
+		{7385F20C-CAEA-4804-A706-AEE1E894E1B4} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{E039474D-4AF8-47EC-94EB-287471C0DD2E} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
