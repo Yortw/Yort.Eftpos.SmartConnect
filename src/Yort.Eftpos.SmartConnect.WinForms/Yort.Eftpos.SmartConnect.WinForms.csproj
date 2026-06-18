@@ -38,6 +38,13 @@
     <ProjectReference Include="..\Yort.Eftpos.SmartConnect\Yort.Eftpos.SmartConnect.csproj" />
   </ItemGroup>
 
+  <!-- This package does not use System.Text.Json directly, but the core brings it in transitively. Pin the
+       patched 8.0.5 floor (clears the NU1903 high-severity advisories flagged on 8.0.0) so this package's own
+       restore graph and its consumers never resolve the vulnerable version. -->
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
       <_Parameter1>Yort.Eftpos.SmartConnect.WinForms.Tests</_Parameter1>

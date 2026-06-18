@@ -43,11 +43,12 @@
   <ItemGroup>
     <!-- Explicit MINIMUM floors, deliberately not floating (8.0.*) and not exact-pinned ([8.0.x]): in a library a
          PackageReference version is a >= minimum that NuGet floats UP to unify the consumer's dependency graph.
-         Floating is non-deterministic at build/pack; an exact pin causes consumer version conflicts. 8.0.0 is the
-         lowest we build and test against; it can be lowered later (e.g. System.Text.Json 6.0 has SerializeToNode)
-         once verified against that floor. -->
+         Floating is non-deterministic at build/pack; an exact pin causes consumer version conflicts.
+         Microsoft.Extensions.Logging.Abstractions 8.0.0 is the lowest we build and test against.
+         System.Text.Json is floored at 8.0.5 — the patched 8.0.x that clears the high-severity advisories
+         (NU1903: GHSA-8g4q-xg66-9fp4, GHSA-hh2w-p6rv-4g7w) present in 8.0.0. Do not lower below the patched floor. -->
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
-    <PackageReference Include="System.Text.Json" Version="8.0.0" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 
 </Project>
