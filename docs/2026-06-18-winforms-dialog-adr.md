@@ -1,4 +1,4 @@
-# ADR — `Yort.Eftpos.SmartConnect.WinForms` progress/outcome dialog
+# ADR — `Yort.Eftpos.SmartConnect.WinForms` dialog library (progress/outcome + pairing)
 
 **Date:** 2026-06-18
 **Status:** Accepted
@@ -141,7 +141,45 @@ factored into an internal presenter for unit testing.
 **Rationale.** Encapsulation — consumers cannot manipulate arbitrary `Form` internals; the
 testable logic is isolated from the untestable `Form`.
 
-**Trade-offs accepted.** Slightly more types than exposing the `Form` directly.
+**Trade-offs accepted.** Slightly more types than exposing the `Form` directly. The shared
+appearance/owner logic is shared by **composition** (an internal helper), not an internal base
+class, because a public type cannot derive from an internal one (CS0060).
+
+## Decision 9 — Pairing gets its own dialog, driven via a callback seam
+
+**Context.** `PairAsync` is structurally unlike the progress operations: one-shot, no
+`IProgress`, it **throws** `SmartConnectTransportException` on transport failure (a bad code
+instead returns `Success = false`), and it is **UI-initiated** — the operator types the pairing
+code the dialog collects before anything is called. A UI library that cannot onboard a terminal
+is missing the key piece of EFTPOS UI.
+
+**Decision.** A separate `SmartConnectPairingDialog` (sharing the appearance surface) that owns
+an interactive loop — prompt → busy → result → retry-on-failure / cancel — and invokes a
+caller-supplied `Func<string, Task<SmartConnectPairingResult>>` with the entered code. It
+returns the successful result, or `null` if cancelled, and catches
+`SmartConnectTransportException` to render it as a retryable failure (surfacing `Delivery`).
+
+**Rationale.** The callback is the async equivalent of the prior art's event round-trip
+(raise → handle → `SetResponse` ≡ collect code → invoke callback → await result), and it leaves
+the literal `client.PairAsync(code, request)` call in the consumer's code — consistent with the
+model-D principle that the consumer, not the UI, drives the client. The dialog depends on **no
+client type at all** (only the `Func`), so it is more decoupled than the Verifone adapter and
+trivially unit-testable with a fake callback. Encapsulating the retry loop and the throw
+handling is the library's value-add.
+
+**Trade-offs accepted.** The dialog orchestrates *when* the call runs (it owns the loop), which
+is the "UI drives it" coupling rejected for transactions — accepted here because pairing's input
+originates in the dialog, the retry loop lives in the dialog, and it is a one-time setup gesture,
+not a per-sale business operation. This is a deliberate, reasoned exception to Decision 1, not a
+contradiction.
+
+**Options considered.** Pure model-D (dialog only does `PromptForCodeAsync`/`ShowResultAsync`;
+the consumer writes the `while` + `try/catch` loop) — rejected: pushes ~10 lines of error-prone
+boilerplate onto every consumer, defeating the helper's purpose. Direct client argument
+(`dialog.PairAsync(client, request)`) — rejected in favour of the callback: terser but makes the
+UI object literally invoke the client and couples the dialog to `SmartConnectClient`. An
+event-style API (`CodeEntered` + `SetResult`) — rejected: mutable state, ordering hazards, more
+ceremony, and ill-suited to a UI-initiated flow.
 
 ---
 
@@ -154,4 +192,4 @@ testable logic is isolated from the untestable `Form`.
 | Cancel / abort affordance | No cancel and no `CancellationToken` in the core API. |
 | Dialog reuse across operations | One-shot per `using` keeps lifecycle simple. |
 | `net472` (or lower) floor | Add only if a sub-4.8 consumer appears. |
-| Pairing UI | `PairAsync` is a one-shot with no progress. |
+| Re-pair / unpair UI | No unpair API exists (done at the terminal); pairing covers onboarding only. |

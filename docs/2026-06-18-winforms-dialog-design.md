@@ -1,4 +1,4 @@
-# Design — `Yort.Eftpos.SmartConnect.WinForms` progress/outcome dialog
+# Design — `Yort.Eftpos.SmartConnect.WinForms` dialog library (progress/outcome + pairing)
 
 **Date:** 2026-06-18
 **Status:** Approved (brainstorm complete; implementation plan pending)
@@ -7,23 +7,31 @@
 
 ## 1. Purpose & scope
 
-A reusable, opt-in WinForms companion package that:
+A reusable, opt-in WinForms companion package providing two dialogs:
 
-1. shows a "please wait" dialog while a progress-bearing SmartConnect operation runs, and
-2. optionally presents that operation's outcome afterwards.
+1. **`SmartConnectProgressDialog`** — shows a "please wait" dialog while a progress-bearing
+   SmartConnect operation runs, and optionally presents that operation's outcome afterwards.
+2. **`SmartConnectPairingDialog`** — prompts the operator for the terminal's pairing code,
+   runs the pairing attempt, shows the result, and lets the operator retry a bad code or
+   cancel.
 
 It is general-purpose — it depends only on the public surface of the core
 `Yort.Eftpos.SmartConnect` package and contains no consumer-specific logic.
 
-**Scope (B):** every progress-bearing client operation, not just customer transactions:
+**Progress dialog scope (B):** every progress-bearing client operation, not just customer
+transactions:
 
 - Financial (`SmartConnectTransactionResult`): `ProcessTransactionAsync`,
   `ResumePollingAsync`, `GetLastTransactionResultAsync`.
 - Non-financial (`SmartConnectOperationResult`): `LogonAsync`, `SettlementInquiryAsync`,
   `SettlementCutoverAsync`, `GetTerminalStatusAsync`, `ExecuteNonFinancialAsync`.
 
-`PairAsync` is **out of scope** — it is a one-shot that takes no `IProgress` and throws
-`SmartConnectTransportException` on transport failure, so there is no polling to surface.
+**Pairing dialog scope:** `PairAsync`. It is structurally different from the progress
+operations — a one-shot that takes no `IProgress`, **throws** `SmartConnectTransportException`
+on transport failure (a service rejection such as a bad code instead returns
+`Success = false` + `ErrorMessage`), and is **UI-initiated** (the operator types a code the
+dialog collects before anything is called). It therefore gets its own dialog rather than
+sharing the progress dialog's observe-only model.
 
 ### Relationship to the Verifone prior art
 
@@ -42,7 +50,14 @@ a caption + busy indicator, with title/logo/colour/font customisation.
 
 ## 2. Public surface
 
-One public type; the `Form` stays internal.
+Two public dialog types; each `Form` stays internal. The shared appearance surface
+(`WindowTitle`, `Logo`, `BackgroundColour`, `ForegroundColour`, `Font`, `DisableOwnerWhileBusy`)
+plus owner handling (centre-on-screen when null, disable/re-enable while busy) is shared via an
+**internal composition helper**, *not* an internal base class — a public type cannot derive from
+an internal one (CS0060), so the two sealed public dialogs each expose the appearance properties
+and forward to the shared helper.
+
+### 2a. `SmartConnectProgressDialog`
 
 ```csharp
 namespace Yort.Eftpos.SmartConnect.WinForms;
@@ -96,6 +111,55 @@ The transaction call's signature and return are exactly the core library's; the 
 wraps, substitutes, or relays the result. Non-WinForms consumers simply don't reference this
 package.
 
+### 2b. `SmartConnectPairingDialog`
+
+```csharp
+namespace Yort.Eftpos.SmartConnect.WinForms;
+
+public sealed class SmartConnectPairingDialog : IDisposable
+{
+    public SmartConnectPairingDialog();                  // owner-less → centre on screen
+    public SmartConnectPairingDialog(IWin32Window owner);
+
+    // Shared appearance surface (forwarded to the internal composition helper)
+    public string WindowTitle { get; set; }
+    public Image? Logo { get; set; }
+    public Color BackgroundColour { get; set; }
+    public Color ForegroundColour { get; set; }
+    public Font Font { get; set; }
+    public bool DisableOwnerWhileBusy { get; set; } = true;
+
+    // Overridable, localisable prompt/labels (pre-populated with defaults)
+    public string Prompt { get; set; }                   // "Enter the pairing code shown on the terminal"
+
+    // Drives prompt → busy → result, looping on failure until success or cancel. Returns the
+    // successful result, or null if the operator cancelled. The dialog depends on NO client
+    // type — only on a callback that turns the entered code into a pairing result.
+    public Task<SmartConnectPairingResult?> ShowAsync(Func<string, Task<SmartConnectPairingResult>> pairWithCode);
+
+    public void Dispose();
+}
+```
+
+Canonical usage (model **A** — callback seam; the dialog owns the interactive loop, you write
+the client call):
+
+```csharp
+using var dialog = new SmartConnectPairingDialog(this) { WindowTitle = "Pair Terminal", Logo = myLogo };
+
+var request = new SmartConnectPairingRequest
+{
+    POSRegisterID = SmartConnectRegisterId.Generate("MyMerchant", "Register-01"),
+    POSBusinessName = "My Store",
+    POSVendorName = "MyPos",
+    POSRegisterName = "Front Counter"
+};
+
+var result = await dialog.ShowAsync(code => client.PairAsync(code, request));
+if (result is null)            { /* operator cancelled — not paired */ }
+else                           { /* paired (result.Success is true) */ }
+```
+
 ## 3. Behaviour
 
 - **Lifecycle.** The dialog auto-shows on the **first** progress report and closes on
@@ -137,6 +201,27 @@ package.
 - **One operation per instance.** Construct a dialog per operation (`using`). Reuse across
   multiple sequential operations is not a goal.
 
+### Pairing dialog (`SmartConnectPairingDialog`)
+
+- **Loop:** prompt for code (with `Cancel`) → on submit, disable input and show a brief
+  "Pairing…" busy state while awaiting the callback → present the result. On a failed result
+  (or a caught `SmartConnectTransportException`), show the error and return to the prompt so the
+  operator can retry or cancel. On success, show success and dismiss on the operator's OK,
+  returning the result. Cancel at any prompt returns `null`. (No auto-close timeout on pairing —
+  unlike a transaction outcome, the operator is actively onboarding and should acknowledge.)
+- **Code validation:** the dialog requires a non-blank, trimmed code before invoking the
+  callback (so the callback never triggers the core's empty-code `ArgumentException`).
+- **Exception handling:** the dialog catches `SmartConnectTransportException` from the callback
+  and renders it as a retryable failure, surfacing `Delivery` — `NotSent` ("couldn't reach the
+  service — safe to retry"; amber) vs `Unknown` ("may have paired — retrying the same register
+  is harmless, or cancel and check the terminal"; amber). Other exceptions (e.g.
+  `ObjectDisposedException`, a programming error) propagate out of `ShowAsync`.
+- **Busy state:** `PairAsync` is one-shot with no `IProgress`, so the busy state is a simple
+  indeterminate spinner shown for the duration of the single await — there are no poll states
+  to caption.
+- **Threading / null owner / modal-like behaviour:** identical to the progress dialog (construct
+  on the UI thread; centre-on-screen when owner is null; disable owner while busy).
+
 ## 4. Layout
 
 ```
@@ -152,6 +237,19 @@ package.
 
 The busy indicator is an **indeterminate** marquee — SmartConnect polling reports *states*,
 never a percentage, so there is no progress fraction to show.
+
+Pairing dialog (`SmartConnectPairingDialog`):
+
+```
+  Prompt state                            Result state (success / retryable failure)
+ ┌─ Pair Terminal ────────────┐          ┌─ Pair Terminal ────────────┐
+ │   [ logo ]                  │          │   [ logo ]                  │
+ │   Enter the pairing code    │          │   ✔  Paired                 │  ← green
+ │   shown on the terminal:    │          │   ✘  Invalid code           │  ← red (+ ErrorMessage)
+ │   [____________]            │          │                             │
+ │        [ Pair ] [ Cancel ]  │          │   [ Try again ] [ Cancel ]  │  (failure only)
+ └─────────────────────────────┘          └─────────────────────────────┘
+```
 
 ## 5. Project, packaging, frameworks
 
@@ -177,7 +275,14 @@ UI-free **presenter** and unit-tested directly:
 - the auto-show / first-progress decision and the owner-disable/re-enable decision (as pure
   logic, separate from the `Form`).
 
-The `Form` itself stays a thin shell, verified by hand and via the existing demo app
+For pairing, the loop logic is testable without any `Form` because the dialog depends only on a
+`Func<string, Task<SmartConnectPairingResult>>`: feed a fake callback and assert the
+state-machine decisions — code-validation gating (blank code never invokes the callback),
+retry-on-failure vs close-on-success, cancel → `null`, and `SmartConnectTransportException`
+caught-and-rendered-as-retryable (with the `NotSent`/`Unknown` distinction) while other
+exceptions propagate.
+
+The `Form`s themselves stay thin shells, verified by hand and via the existing demo app
 (manual smoke against a dev terminal).
 
 ## 7. Deferred / out of scope
@@ -188,4 +293,4 @@ The `Form` itself stays a thin shell, verified by hand and via the existing demo
 | `PrintRequested` event | Prior-art feature with no SmartConnect analog. |
 | Cancel / abort affordance | No programmatic cancel and no `CancellationToken` in the core API; would be misleading. |
 | Dialog reuse across operations | One-shot per `using` keeps lifecycle simple; revisit only if a real need appears. |
-| Pairing UI | `PairAsync` is a one-shot with no progress; a separate concern if ever wanted. |
+| Re-pair / unpair UI | There is no unpair API (it is done at the terminal); pairing covers the onboarding gesture only. |
