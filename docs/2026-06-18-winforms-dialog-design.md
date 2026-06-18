@@ -282,8 +282,10 @@ retry-on-failure vs close-on-success, cancel → `null`, and `SmartConnectTransp
 caught-and-rendered-as-retryable (with the `NotSent`/`Unknown` distinction) while other
 exceptions propagate.
 
-The `Form`s themselves stay thin shells, verified by hand and via the existing demo app
-(manual smoke against a dev terminal).
+The `Form`s themselves stay thin shells, verified by hand and via a **separate tiny WinForms
+sample** (`samples/Yort.Eftpos.SmartConnect.WinFormsDemo`, `net8.0-windows`) — kept apart from
+the existing cross-platform console demo so the WinForms/Windows-only dependency does not
+constrain that demo's target frameworks. Manual smoke against a dev terminal.
 
 ## 7. Deferred / out of scope
 
