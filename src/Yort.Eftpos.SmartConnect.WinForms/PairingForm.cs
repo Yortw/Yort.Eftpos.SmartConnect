@@ -20,6 +20,7 @@ internal sealed class PairingForm : Form, IPairingView
 	private readonly Button _retry;
 	private readonly Button _cancel2;
 	private readonly Button _ok;
+	private readonly Font _messageFont;
 
 	private TaskCompletionSource<string?>? _codeResult;
 	private TaskCompletionSource<bool>? _failureResult;
@@ -42,7 +43,8 @@ internal sealed class PairingForm : Form, IPairingView
 		_cancel = new Button { Text = "Cancel", Bounds = new Rectangle(292, 140, 76, 30) };
 		_busy = new ProgressBar { Style = ProgressBarStyle.Marquee, Bounds = new Rectangle(12, 140, 180, 16), Visible = false };
 
-		_message = new Label { Bounds = new Rectangle(12, 76, 356, 52), Visible = false, Font = new Font(Font.FontFamily, 11, FontStyle.Bold) };
+		_messageFont = new Font(Font.FontFamily, 11, FontStyle.Bold);
+		_message = new Label { Bounds = new Rectangle(12, 76, 356, 52), Visible = false, Font = _messageFont };
 		_retry = new Button { Text = "Try again", Bounds = new Rectangle(206, 140, 76, 30), Visible = false };
 		_cancel2 = new Button { Text = "Cancel", Bounds = new Rectangle(292, 140, 76, 30), Visible = false };
 		_ok = new Button { Text = "OK", Bounds = new Rectangle(292, 140, 76, 30), Visible = false };
@@ -162,6 +164,7 @@ internal sealed class PairingForm : Form, IPairingView
 			_codeResult?.TrySetResult(null);
 			_failureResult?.TrySetResult(false);
 			_successAck?.TrySetResult(true);
+			_messageFont?.Dispose();
 		}
 
 		base.Dispose(disposing);

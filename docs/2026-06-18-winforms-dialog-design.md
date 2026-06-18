@@ -79,7 +79,7 @@ public sealed class SmartConnectProgressDialog : IDisposable
     public bool DisableOwnerWhileBusy { get; set; } = true;
 
     // Overridable, localisable captions. A default is used only when the library's
-    // PollingStatus.Message is null (progress) / for the mapped status (outcome).
+    // SmartConnectPollingStatus.Message is null (progress) / for the mapped status (outcome).
     public IDictionary<SmartConnectPollingState, string> StateCaptions { get; }
     public IDictionary<SmartConnectTransactionStatus, string> TransactionResultCaptions { get; }
     public IDictionary<SmartConnectOperationStatus, string> OperationResultCaptions { get; }
@@ -182,7 +182,7 @@ else                           { /* paired (result.Success is true) */ }
   removes the prior art's manual `InvokeRequired` marshalling.
 - **Caption maps come pre-populated** with the defaults below; consumers replace individual
   entries to override, and the values are plain strings/resources so they can be localised.
-- **Caption resolution (progress).** For each report, prefer `PollingStatus.Message` when
+- **Caption resolution (progress).** For each report, prefer `SmartConnectPollingStatus.Message` when
   non-null; otherwise use `StateCaptions[State]`; defaults:
   - `Polling` → "Processing payment…"
   - `Delayed` → "Waiting for pinpad — it may be offline…"
@@ -269,7 +269,7 @@ Pairing dialog (`SmartConnectPairingDialog`):
 WinForms UI is awkward to unit-test, so the testable logic is extracted into an internal,
 UI-free **presenter** and unit-tested directly:
 
-- caption resolution — including the **negative/invariant case**: when `PollingStatus.Message`
+- caption resolution — including the **negative/invariant case**: when `SmartConnectPollingStatus.Message`
   is non-null the default caption is **not** used;
 - status → caption + colour mapping for both result types (every enum value, incl. `Unknown`);
 - the auto-show / first-progress decision and the owner-disable/re-enable decision (as pure

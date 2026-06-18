@@ -17,6 +17,7 @@ internal sealed class ProgressForm : Form, IProgressView
 	private readonly Label _resultCaption;
 	private readonly Label _resultDetail;
 	private readonly Button _ok;
+	private readonly Font _resultCaptionFont;
 	private System.Windows.Forms.Timer? _autoClose;
 	private TaskCompletionSource<bool>? _resultAck;
 
@@ -35,7 +36,8 @@ internal sealed class ProgressForm : Form, IProgressView
 		_caption = new Label { Bounds = new Rectangle(12, 84, 336, 28), TextAlign = ContentAlignment.MiddleCenter };
 		_busy = new ProgressBar { Style = ProgressBarStyle.Marquee, Bounds = new Rectangle(12, 120, 336, 16) };
 
-		_resultCaption = new Label { Bounds = new Rectangle(12, 24, 336, 40), TextAlign = ContentAlignment.MiddleCenter, Font = new Font(Font.FontFamily, 16, FontStyle.Bold) };
+		_resultCaptionFont = new Font(Font.FontFamily, 16, FontStyle.Bold);
+		_resultCaption = new Label { Bounds = new Rectangle(12, 24, 336, 40), TextAlign = ContentAlignment.MiddleCenter, Font = _resultCaptionFont };
 		_resultDetail = new Label { Bounds = new Rectangle(12, 68, 336, 36), TextAlign = ContentAlignment.MiddleCenter };
 		_ok = new Button { Text = "OK", Bounds = new Rectangle(140, 112, 80, 30), DialogResult = DialogResult.OK };
 		_ok.Click += (_, _) => CompleteResult();
@@ -153,6 +155,7 @@ internal sealed class ProgressForm : Form, IProgressView
 		{
 			_autoClose?.Dispose();
 			_resultAck?.TrySetResult(false);
+			_resultCaptionFont?.Dispose();
 		}
 
 		base.Dispose(disposing);

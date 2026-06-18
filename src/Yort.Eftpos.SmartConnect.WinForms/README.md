@@ -60,7 +60,7 @@ progress-bearing client method:
   `GetTerminalStatusAsync`, `ExecuteNonFinancialAsync`
 
 The dialog auto-shows on the first progress report and closes on `Dispose`. The
-library's `PollingStatus.Message` is used as the caption when non-null; otherwise the
+library's `SmartConnectPollingStatus.Message` is used as the caption when non-null; otherwise the
 configurable `StateCaptions` dictionary is used (pre-populated with sensible defaults).
 
 ### Outcome display
