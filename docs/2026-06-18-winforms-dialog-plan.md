@@ -22,6 +22,33 @@
 
 ---
 
+## Adversarial Review Integration (2026-06-18)
+
+A fresh-subagent adversarial review produced 4 blockers + 6 test gaps + 4 defers. Each was verified
+against the plan code and the core source before integration:
+
+- **F2 (blocker, cat 1/9):** caption maps are consumer-mutable; direct indexing would throw
+  `KeyNotFoundException` on the UI thread if a key is removed. → `ResultVisuals` and `CaptionResolver`
+  resolve via `TryGetValue` with an enum-name fallback (Tasks 2, 3).
+- **F3 (blocker, cat 7):** `Timer.Interval` throws on ≤0 and `(int)TotalMilliseconds` overflows large
+  `TimeSpan`s. → new tested `DialogTimeouts.ToIntervalMs` guard (Task 5b), used by the form (Task 8).
+- **F4 (blocker, cat 2/3):** repeated `ShowResultAsync` abandons the prior `TaskCompletionSource` and
+  orphans the prior `Timer`. → re-entrancy cleanup + `IsDisposed` guard in `ProgressForm.ShowResultAsync`
+  (Task 8).
+- **F5/F6 (blocker + test gap, cat 9/10):** the design requires distinct operator guidance for transport
+  `NotSent` vs `Unknown`. Verified `ex.Message` carries delivery-specific text but it is *financial*-flavoured
+  ("Do not blind-retry a financial operation"), wrong for pairing. → `PairingController` composes
+  pairing-specific messages keyed on `ex.Delivery`; tests assert both deliveries' distinct wording (Task 6).
+- **F7 (test gap, cat 6/3):** closing `PairingForm` via the window X mid-prompt would hang the `ShowAsync`
+  await. → `FormClosing` resolves any pending wait as cancel (Task 9); smoke item (Task 10).
+- **F10 (test gap, cat 1):** whitespace-only `Message` would display as a blank caption. → `CaptionResolver`
+  uses `IsNullOrWhiteSpace`; whitespace test added (Task 3).
+- **F8:** the OK-vs-timeout race is already safe (`TrySetResult` + timer dispose in `CompleteResult`); added
+  a manual smoke-checklist item only (Task 10).
+- **F9 (defer):** no diagnostic logging in this thin view package → recorded in the ADR's deferred table.
+- **F11 (defer):** "construct on UI thread" precondition has no runtime guard — already accepted in ADR
+  Decision 7; the `///` on both public types states it.
+
 ## File Structure
 
 **Library — `src/Yort.Eftpos.SmartConnect.WinForms/`:**
@@ -31,6 +58,7 @@
 - `ResultVisuals.cs` — internal static: status → `ResultVisual` for both result enums.
 - `DefaultCaptions.cs` — internal static: factory methods for the three pre-populated caption maps.
 - `CaptionResolver.cs` — internal static: progress caption resolution (Message vs map).
+- `DialogTimeouts.cs` — internal static: auto-close `TimeSpan` → validated/clamped `Timer` interval.
 - `NativeMethods.cs` — internal static: `EnableWindow` P/Invoke.
 - `OwnerController.cs` — internal: owner-window disable/restore with an injectable enable-action.
 - `IProgressView.cs` — internal interface.
@@ -48,7 +76,7 @@
 - `Yort.Eftpos.SmartConnect.WinForms.Tests.csproj` — `net8.0-windows`, xUnit.
 - `ResultVisualsTests.cs`, `CaptionResolverTests.cs`, `OwnerControllerTests.cs`,
   `ProgressControllerTests.cs`, `PairingControllerTests.cs`, plus the fakes
-  `Fakes/FakeProgressView.cs`, `Fakes/FakePairingView.cs`.
+  `Fakes/FakeProgressView.cs`, `Fakes/FakePairingView.cs`, plus `DialogTimeoutsTests.cs`.
 
 **Sample — `samples/Yort.Eftpos.SmartConnect.WinFormsDemo/`:**
 - `Yort.Eftpos.SmartConnect.WinFormsDemo.csproj` — `net8.0-windows`, `OutputType` WinExe.
@@ -275,6 +303,24 @@ public class ResultVisualsTests
 		var visual = ResultVisuals.ForOperation(SmartConnectOperationStatus.Succeeded, "ignored", OpCaptions);
 		Assert.Null(visual.Detail);
 	}
+
+	// F2: a consumer-removed caption key must degrade to the enum name, never throw.
+	[Fact]
+	public void ForTransaction_MissingCaptionKey_FallsBackToEnumName()
+	{
+		var empty = new Dictionary<SmartConnectTransactionStatus, string>();
+		var visual = ResultVisuals.ForTransaction(SmartConnectTransactionStatus.Declined, empty);
+		Assert.Equal("Declined", visual.Caption);
+		Assert.Equal(ResultSeverity.Negative, visual.Severity);
+	}
+
+	[Fact]
+	public void ForOperation_MissingCaptionKey_FallsBackToEnumName()
+	{
+		var empty = new Dictionary<SmartConnectOperationStatus, string>();
+		var visual = ResultVisuals.ForOperation(SmartConnectOperationStatus.Succeeded, errorMessage: null, empty);
+		Assert.Equal("Succeeded", visual.Caption);
+	}
 }
 ```
 
@@ -361,7 +407,10 @@ internal static class ResultVisuals
 			severity = ResultSeverity.Negative;
 		}
 
-		return new ResultVisual(captions[status], severity, detail: null);
+		// Defensive (F2): the caption maps are consumer-mutable. A removed key must degrade to the enum
+		// name, never throw KeyNotFoundException on the UI thread while showing an outcome.
+		var caption = captions.TryGetValue(status, out var mapped) ? mapped : status.ToString();
+		return new ResultVisual(caption, severity, detail: null);
 	}
 
 	/// <summary>Resolves the visual for a non-financial operation status. The error message becomes the
@@ -384,7 +433,9 @@ internal static class ResultVisuals
 			detail = errorMessage;
 		}
 
-		return new ResultVisual(captions[status], severity, detail);
+		// Defensive (F2): degrade a missing key to the enum name rather than throwing.
+		var caption = captions.TryGetValue(status, out var mapped) ? mapped : status.ToString();
+		return new ResultVisual(caption, severity, detail);
 	}
 }
 ```
@@ -465,6 +516,26 @@ public class CaptionResolverTests
 		Assert.Equal(captions[SmartConnectPollingState.BackingOff], CaptionResolver.Resolve(status, captions));
 	}
 
+	// F10: a whitespace-only message is treated as absent (would otherwise show a blank caption).
+	[Fact]
+	public void Resolve_TreatsWhitespaceMessageAsAbsent()
+	{
+		var captions = DefaultCaptions.CreateStateCaptions();
+		var status = new SmartConnectPollingStatus { State = SmartConnectPollingState.BackingOff, Message = "   " };
+
+		Assert.Equal(captions[SmartConnectPollingState.BackingOff], CaptionResolver.Resolve(status, captions));
+	}
+
+	// F2: a removed state key degrades to the enum name rather than throwing.
+	[Fact]
+	public void Resolve_MissingStateKey_FallsBackToStateName()
+	{
+		var empty = new Dictionary<SmartConnectPollingState, string>();
+		var status = new SmartConnectPollingStatus { State = SmartConnectPollingState.Delayed, Message = null };
+
+		Assert.Equal("Delayed", CaptionResolver.Resolve(status, empty));
+	}
+
 	[Fact]
 	public void Resolve_RespectsCustomisedCaption()
 	{
@@ -490,7 +561,7 @@ public class CaptionResolverTests
 }
 ```
 
-(Add `using System.Linq;` at the top.)
+(Add `using System.Collections.Generic;` and `using System.Linq;` at the top.)
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -564,12 +635,15 @@ internal static class CaptionResolver
 	/// caption mapped for the report's <see cref="SmartConnectPollingStatus.State"/>.</summary>
 	public static string Resolve(SmartConnectPollingStatus status, IReadOnlyDictionary<SmartConnectPollingState, string> captions)
 	{
-		if (!string.IsNullOrEmpty(status.Message))
+		// IsNullOrWhiteSpace (F10): a whitespace-only message would otherwise render as a blank caption;
+		// the pairing path trims-and-checks too, so treat blank-ish messages consistently as "absent".
+		if (!string.IsNullOrWhiteSpace(status.Message))
 		{
 			return status.Message!;
 		}
 
-		return captions[status.State];
+		// Defensive (F2): degrade a missing/removed state key to the enum name rather than throwing.
+		return captions.TryGetValue(status.State, out var caption) ? caption : status.State.ToString();
 	}
 }
 ```
@@ -991,6 +1065,109 @@ git commit -m "feat: progress view interface and controller"
 
 ---
 
+### Task 5b: Auto-close timeout guard (`DialogTimeouts`)
+
+**Files:**
+- Create: `src/Yort.Eftpos.SmartConnect.WinForms/DialogTimeouts.cs`
+- Test: `tests/Yort.Eftpos.SmartConnect.WinForms.Tests/DialogTimeoutsTests.cs`
+
+**Interfaces:**
+- Produces: `internal static class DialogTimeouts` with `int ToIntervalMs(TimeSpan autoCloseAfter)` — throws `ArgumentOutOfRangeException` for `<= TimeSpan.Zero`, and clamps to `int.MaxValue` so a very large `TimeSpan` cannot overflow `Timer.Interval`.
+
+Reason (F3): `System.Windows.Forms.Timer.Interval` throws for any value `<= 0`, and `(int)TimeSpan.TotalMilliseconds` overflows for durations beyond ~24.8 days. The public `ShowResultAsync(result, TimeSpan)` overloads accept any `TimeSpan`, so this guard is the single validation point the form uses.
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/Yort.Eftpos.SmartConnect.WinForms.Tests/DialogTimeoutsTests.cs`:
+
+```csharp
+using System;
+using Xunit;
+using Yort.Eftpos.SmartConnect.WinForms;
+
+namespace Yort.Eftpos.SmartConnect.WinForms.Tests;
+
+public class DialogTimeoutsTests
+{
+	[Fact]
+	public void ToIntervalMs_NormalDuration_ReturnsMilliseconds()
+	{
+		Assert.Equal(5000, DialogTimeouts.ToIntervalMs(TimeSpan.FromSeconds(5)));
+	}
+
+	[Fact]
+	public void ToIntervalMs_Zero_Throws()
+	{
+		Assert.Throws<ArgumentOutOfRangeException>(() => DialogTimeouts.ToIntervalMs(TimeSpan.Zero));
+	}
+
+	[Fact]
+	public void ToIntervalMs_Negative_Throws()
+	{
+		Assert.Throws<ArgumentOutOfRangeException>(() => DialogTimeouts.ToIntervalMs(TimeSpan.FromSeconds(-1)));
+	}
+
+	[Fact]
+	public void ToIntervalMs_HugeDuration_ClampsToIntMax()
+	{
+		Assert.Equal(int.MaxValue, DialogTimeouts.ToIntervalMs(TimeSpan.FromDays(365)));
+	}
+}
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `dotnet test tests/Yort.Eftpos.SmartConnect.WinForms.Tests --filter DialogTimeoutsTests`
+Expected: FAIL — `DialogTimeouts` does not exist.
+
+- [ ] **Step 3: Implement**
+
+`src/Yort.Eftpos.SmartConnect.WinForms/DialogTimeouts.cs`:
+
+```csharp
+using System;
+
+namespace Yort.Eftpos.SmartConnect.WinForms;
+
+/// <summary>Converts an auto-close <see cref="TimeSpan"/> to a valid <c>Timer.Interval</c> in
+/// milliseconds. The WinForms timer rejects intervals &lt;= 0 and an int cast overflows for very large
+/// spans, so this is the single guarded conversion the dialog uses.</summary>
+internal static class DialogTimeouts
+{
+	/// <summary>Returns the millisecond interval for the given auto-close duration.</summary>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="autoCloseAfter"/> is not positive.</exception>
+	public static int ToIntervalMs(TimeSpan autoCloseAfter)
+	{
+		if (autoCloseAfter <= TimeSpan.Zero)
+		{
+			throw new ArgumentOutOfRangeException(nameof(autoCloseAfter), "The auto-close duration must be positive.");
+		}
+
+		var ms = autoCloseAfter.TotalMilliseconds;
+		if (ms >= int.MaxValue)
+		{
+			return int.MaxValue;
+		}
+
+		return (int)ms;
+	}
+}
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `dotnet test tests/Yort.Eftpos.SmartConnect.WinForms.Tests --filter DialogTimeoutsTests`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/Yort.Eftpos.SmartConnect.WinForms/DialogTimeouts.cs tests/Yort.Eftpos.SmartConnect.WinForms.Tests/DialogTimeoutsTests.cs
+git commit -m "feat: auto-close timeout guard for the progress dialog"
+```
+
+---
+
 ### Task 6: Pairing view interface & controller (loop state machine)
 
 **Files:**
@@ -1158,10 +1335,44 @@ public class PairingControllerTests
 		Assert.Equal("Invalid code", view.Failures[0].message);
 	}
 
+	// F5/F6: NotSent → amber, and the operator is told it is safe to try again (NOT the core's
+	// financial-flavoured "do not blind-retry" message). Oracle is the design wording, not ex.Message.
 	[Fact]
-	public async Task TransportException_IsCaught_RenderedAmber_AndRetryable()
+	public async Task TransportException_NotSent_RenderedAmber_SafeToRetryWording()
 	{
-		var view = new FakePairingView(new string?[] { "1234", "1234" }, new[] { false });
+		var view = new FakePairingView(new string?[] { "1234" }, new[] { false });
+		Func<string, Task<SmartConnectPairingResult>> callback = code =>
+			throw new SmartConnectTransportException(SmartConnectRequestDelivery.NotSent, new Exception("boom"));
+
+		var result = await new PairingController().RunAsync(view, callback);
+
+		Assert.Null(result);
+		Assert.Single(view.Failures);
+		Assert.Equal(ResultSeverity.Ambiguous, view.Failures[0].severity);
+		Assert.Contains("safe to try again", view.Failures[0].message);
+		Assert.DoesNotContain("financial", view.Failures[0].message);
+	}
+
+	// F5/F6: Unknown → amber, and the operator is told it MAY have paired (distinct from NotSent).
+	[Fact]
+	public async Task TransportException_Unknown_RenderedAmber_MayHavePairedWording()
+	{
+		var view = new FakePairingView(new string?[] { "1234" }, new[] { false });
+		Func<string, Task<SmartConnectPairingResult>> callback = code =>
+			throw new SmartConnectTransportException(SmartConnectRequestDelivery.Unknown, new Exception("boom"));
+
+		var result = await new PairingController().RunAsync(view, callback);
+
+		Assert.Null(result);
+		Assert.Single(view.Failures);
+		Assert.Equal(ResultSeverity.Ambiguous, view.Failures[0].severity);
+		Assert.Contains("may have paired", view.Failures[0].message);
+	}
+
+	[Fact]
+	public async Task TransportException_Retryable_ContinuesLoop()
+	{
+		var view = new FakePairingView(new string?[] { "1234", "1234" }, new[] { true });
 		var attempt = 0;
 		Func<string, Task<SmartConnectPairingResult>> callback = code =>
 		{
@@ -1176,9 +1387,8 @@ public class PairingControllerTests
 
 		var result = await new PairingController().RunAsync(view, callback);
 
-		Assert.Null(result);   // operator chose not to retry
-		Assert.Single(view.Failures);
-		Assert.Equal(ResultSeverity.Ambiguous, view.Failures[0].severity);   // transport failure → amber
+		Assert.True(result!.Success);   // retried after transport failure, then succeeded
+		Assert.Equal(2, attempt);
 	}
 
 	[Fact]
@@ -1267,9 +1477,14 @@ internal sealed class PairingController
 			}
 			catch (SmartConnectTransportException ex)
 			{
-				// Transport failure: the message is already operator-appropriate and URL-free; NotSent and
-				// Unknown both render amber (ambiguous) — neither is a clean "declined".
-				if (await view.ShowFailureAsync(ex.Message, ResultSeverity.Ambiguous).ConfigureAwait(true))
+				// F5/F6: the core's ex.Message is financial-transaction-flavoured ("Do not blind-retry a
+				// financial operation"), which is wrong for pairing — re-pairing the SAME register is
+				// harmless. Compose pairing-specific guidance keyed on Delivery instead. Both deliveries are
+				// amber (ambiguous): neither is a clean decline, and Unknown means it MAY have paired.
+				var message = ex.Delivery == SmartConnectRequestDelivery.NotSent
+					? "Couldn't reach the service, so the terminal was not paired. It is safe to try again."
+					: "Couldn't confirm the pairing — the terminal may have paired. Trying again with the same register is safe, or cancel and check the terminal.";
+				if (await view.ShowFailureAsync(message, ResultSeverity.Ambiguous).ConfigureAwait(true))
 				{
 					continue;
 				}
@@ -1484,6 +1699,19 @@ internal sealed class ProgressForm : Form, IProgressView
 
 	public Task ShowResultAsync(ResultVisual visual, TimeSpan? autoCloseAfter)
 	{
+		if (IsDisposed)
+		{
+			// F7: disposed mid-flight (host shutdown / early using-scope exit) — nothing to show.
+			return Task.CompletedTask;
+		}
+
+		// F4 re-entrancy: complete and clear any prior outcome wait/timer before starting a new one, so a
+		// second ShowResultAsync can never strand the first awaiter or orphan its timer.
+		_autoClose?.Stop();
+		_autoClose?.Dispose();
+		_autoClose = null;
+		_resultAck?.TrySetResult(false);
+
 		if (!Visible)
 		{
 			Show();
@@ -1501,7 +1729,8 @@ internal sealed class ProgressForm : Form, IProgressView
 		_resultAck = new TaskCompletionSource<bool>();
 		if (autoCloseAfter.HasValue)
 		{
-			_autoClose = new System.Windows.Forms.Timer { Interval = (int)autoCloseAfter.Value.TotalMilliseconds };
+			// F3: DialogTimeouts guards against <= 0 (Timer.Interval throws) and int overflow.
+			_autoClose = new System.Windows.Forms.Timer { Interval = DialogTimeouts.ToIntervalMs(autoCloseAfter.Value) };
 			_autoClose.Tick += (_, _) => CompleteResult();
 			_autoClose.Start();
 		}
@@ -1879,6 +2108,17 @@ internal sealed class PairingForm : Form, IPairingView
 		_busy.Visible = false;
 	}
 
+	protected override void OnFormClosing(FormClosingEventArgs e)
+	{
+		// F7: closing via the window controls (X / Alt+F4) must resolve any pending interaction as a
+		// cancel, so an awaiting ShowAsync returns null instead of hanging waiting on a TCS no button
+		// will ever complete.
+		_codeResult?.TrySetResult(null);
+		_failureResult?.TrySetResult(false);
+		_successAck?.TrySetResult(true);
+		base.OnFormClosing(e);
+	}
+
 	protected override void Dispose(bool disposing)
 	{
 		if (disposing)
@@ -2152,7 +2392,13 @@ Expected: builds, zero warnings.
 
 - [ ] **Step 5: Manual smoke (record the result)**
 
-Run the app from the IDE (or `dotnet run --project samples/Yort.Eftpos.SmartConnect.WinFormsDemo`). With a dev terminal configured, verify: pairing prompt accepts a code / cancels / shows result; purchase shows the marquee then the outcome screen with the right colour. Record the observed behaviour in the task report (this is the only verification for the form code).
+Run the app from the IDE (or `dotnet run --project samples/Yort.Eftpos.SmartConnect.WinFormsDemo`). With a dev terminal configured, verify and record each (this is the only verification for the form code, so the failure-path items matter):
+
+- Pairing prompt accepts a code, cancels via the Cancel button, and shows the result.
+- **(F7)** Closing the pairing window via the X / Alt+F4 mid-prompt returns `null` from `ShowAsync` — no hang.
+- Purchase shows the marquee, then the outcome screen with the correct colour (green/amber/red).
+- **(F8)** Outcome auto-close: with a `ShowResultAsync(result, TimeSpan.FromSeconds(3))`, confirm it closes after ~3s if untouched, and that clicking OK first closes immediately and the later timer tick is a harmless no-op (no second close, no exception).
+- The owner window is disabled while busy and re-enabled after the dialog closes; an owner-less dialog centres on screen and does not crash.
 
 - [ ] **Step 6: Commit**
 

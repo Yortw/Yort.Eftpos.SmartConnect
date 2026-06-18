@@ -193,3 +193,4 @@ ceremony, and ill-suited to a UI-initiated flow.
 | Dialog reuse across operations | One-shot per `using` keeps lifecycle simple. |
 | `net472` (or lower) floor | Add only if a sub-4.8 consumer appears. |
 | Re-pair / unpair UI | No unpair API exists (done at the terminal); pairing covers onboarding only. |
+| Diagnostic logging in the WinForms package | Deferred — the package is a thin view over the core client, which already logs operations and ambiguous outcomes with the client transaction reference. Revisit only if field issues prove undiagnosable from the core's logs. (Adversarial review F9.) |
