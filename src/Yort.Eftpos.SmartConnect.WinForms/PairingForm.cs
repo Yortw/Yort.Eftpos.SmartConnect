@@ -30,6 +30,10 @@ internal sealed class PairingForm : Form, IPairingView
 	public PairingForm()
 	{
 		FormBorderStyle = FormBorderStyle.FixedSingle;
+		// FixedSingle shows the title-bar icon (unlike FixedDialog, which never does); with no app icon set
+		// that means the default WinForms icon. Drop the whole control box so the caption is clean — the
+		// dialog is dismissed via its own Cancel button or Escape, not the title bar, so losing the X is fine.
+		ControlBox = false;
 		MaximizeBox = false;
 		MinimizeBox = false;
 		ShowInTaskbar = false;
@@ -53,7 +57,9 @@ internal sealed class PairingForm : Form, IPairingView
 		// Emphasised relative to the baseline (+2pt, bold) so it tracks the base size instead of a fixed point
 		// value — at the 12pt default this is 14pt bold.
 		_messageFont = new Font(_baseFont.FontFamily, _baseFont.SizeInPoints + 2f, FontStyle.Bold);
-		_message = new Label { Bounds = new Rectangle(12, 76, 356, 52), Visible = false, Font = _messageFont };
+		// The bounds span the client width symmetrically (12px margins on a 380px form), so MiddleCenter
+		// reads as centred on the dialog — used for both the "Paired" success and the failure messages.
+		_message = new Label { Bounds = new Rectangle(12, 76, 356, 52), Visible = false, Font = _messageFont, TextAlign = ContentAlignment.MiddleCenter };
 		_retry = new Button { Text = "Try again", Bounds = new Rectangle(206, 140, 76, 30), Visible = false };
 		_cancel2 = new Button { Text = "Cancel", Bounds = new Rectangle(292, 140, 76, 30), Visible = false };
 		_ok = new Button { Text = "OK", Bounds = new Rectangle(292, 140, 76, 30), Visible = false };
