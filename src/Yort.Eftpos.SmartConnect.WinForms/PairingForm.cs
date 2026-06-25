@@ -27,6 +27,11 @@ internal sealed class PairingForm : Form, IPairingView
 	private TaskCompletionSource<bool>? _failureResult;
 	private TaskCompletionSource<bool>? _successAck;
 
+	// Vertical placement is owned by LayoutContent (called once at construction for the common no-logo case,
+	// and again from OnLoad when a caller-supplied logo needs the content pushed below it).
+	private const int ContentTopNoLogo = 24;
+	private const int ContentTopWithLogo = 76;
+
 	public PairingForm()
 	{
 		FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -71,6 +76,8 @@ internal sealed class PairingForm : Form, IPairingView
 		_ok.Click += (_, _) => _successAck?.TrySetResult(true);
 
 		Controls.AddRange(new Control[] { _logo, _prompt, _code, _pair, _cancel, _busy, _message, _retry, _cancel2, _ok });
+
+		LayoutContent(ContentTopNoLogo);
 	}
 
 	public PictureBox LogoBox => _logo;
@@ -167,6 +174,40 @@ internal sealed class PairingForm : Form, IPairingView
 		_pair.Visible = false;
 		_cancel.Visible = false;
 		_busy.Visible = false;
+	}
+
+	/// <summary>Places every row vertically from a single content-top, so the prompt/code/buttons block sits
+	/// as one unit. <paramref name="contentTop"/> is the y of the first row; everything below (and the form
+	/// height) is derived, giving symmetric top/bottom margins instead of a logo-sized gap above the prompt.</summary>
+	private void LayoutContent(int contentTop)
+	{
+		_prompt.Top = contentTop;
+		_message.Top = contentTop;
+		_code.Top = _prompt.Bottom + 4;
+
+		var buttonsTop = _code.Bottom + 12;
+		_pair.Top = buttonsTop;
+		_cancel.Top = buttonsTop;
+		_retry.Top = buttonsTop;
+		_cancel2.Top = buttonsTop;
+		_ok.Top = buttonsTop;
+		_busy.Top = buttonsTop + ((_pair.Height - _busy.Height) / 2); // vertically centre the marquee against the buttons
+
+		ClientSize = new Size(ClientSize.Width, buttonsTop + _pair.Height + ContentTopNoLogo); // bottom margin mirrors the no-logo top
+	}
+
+	protected override void OnLoad(EventArgs e)
+	{
+		base.OnLoad(e);
+
+		// DialogChrome applies the logo before the form is shown, so its visibility is known here. A logo
+		// needs the content pushed below it; grow and re-centre to match (the no-logo layout set at
+		// construction is correct as-is and needs no adjustment).
+		if (_logo.Visible)
+		{
+			LayoutContent(ContentTopWithLogo);
+			CenterToScreen();
+		}
 	}
 
 	protected override void OnFormClosing(FormClosingEventArgs e)
