@@ -31,6 +31,7 @@ internal sealed class PairingForm : Form, IPairingView
 	// and again from OnLoad when a caller-supplied logo needs the content pushed below it).
 	private const int ContentTopNoLogo = 24;
 	private const int ContentTopWithLogo = 76;
+	private int _contentTop = ContentTopNoLogo;
 
 	public PairingForm()
 	{
@@ -65,7 +66,7 @@ internal sealed class PairingForm : Form, IPairingView
 		// The bounds span the client width symmetrically (12px margins on a 380px form), so MiddleCenter
 		// reads as centred on the dialog — used for both the "Paired" success and the failure messages.
 		_message = new Label { Bounds = new Rectangle(12, 76, 356, 52), Visible = false, Font = _messageFont, TextAlign = ContentAlignment.MiddleCenter };
-		_retry = new Button { Text = "Try again", Bounds = new Rectangle(206, 140, 76, 30), Visible = false };
+		_retry = new Button { Text = "Retry", Bounds = new Rectangle(206, 140, 76, 30), Visible = false };
 		_cancel2 = new Button { Text = "Cancel", Bounds = new Rectangle(292, 140, 76, 30), Visible = false };
 		_ok = new Button { Text = "OK", Bounds = new Rectangle(292, 140, 76, 30), Visible = false };
 
@@ -122,6 +123,7 @@ internal sealed class PairingForm : Form, IPairingView
 		_message.Text = message;
 		_message.ForeColor = severity == ResultSeverity.Ambiguous ? Color.DarkGoldenrod : Color.Firebrick;
 		_message.Visible = true;
+		LayoutMessage();
 		_retry.Visible = true;
 		_cancel2.Visible = true;
 		_ok.Visible = false;
@@ -138,6 +140,7 @@ internal sealed class PairingForm : Form, IPairingView
 		_message.Text = "Paired";
 		_message.ForeColor = Color.ForestGreen;
 		_message.Visible = true;
+		LayoutMessage();
 		_retry.Visible = false;
 		_cancel2.Visible = false;
 		_ok.Visible = true;
@@ -162,6 +165,9 @@ internal sealed class PairingForm : Form, IPairingView
 		_cancel2.Visible = false;
 		_ok.Visible = false;
 		_busy.Visible = false;
+		// Restore the prompt-mode positions and form size — a prior failure may have grown the form to fit a
+		// multi-line message.
+		LayoutContent(_contentTop);
 		// Enter triggers Pair (no-op while disabled on a blank code), Escape triggers Cancel.
 		AcceptButton = _pair;
 		CancelButton = _cancel;
@@ -181,6 +187,7 @@ internal sealed class PairingForm : Form, IPairingView
 	/// height) is derived, giving symmetric top/bottom margins instead of a logo-sized gap above the prompt.</summary>
 	private void LayoutContent(int contentTop)
 	{
+		_contentTop = contentTop;
 		_prompt.Top = contentTop;
 		_message.Top = contentTop;
 		_code.Top = _prompt.Bottom + 4;
@@ -194,6 +201,26 @@ internal sealed class PairingForm : Form, IPairingView
 		_busy.Top = buttonsTop + ((_pair.Height - _busy.Height) / 2); // vertically centre the marquee against the buttons
 
 		ClientSize = new Size(ClientSize.Width, buttonsTop + _pair.Height + ContentTopNoLogo); // bottom margin mirrors the no-logo top
+	}
+
+	/// <summary>Sizes the message label to its wrapped text and places the buttons below it, growing the form
+	/// to fit. The failure messages are several lines long (and partly caller-influenced via the service's
+	/// error text), so a fixed-height label clips them; measuring keeps every line visible while staying
+	/// compact for short text like "Paired". Grows downward — the top-left stays put, so no jarring re-centre.</summary>
+	private void LayoutMessage()
+	{
+		var width = _message.Width;
+		// Measure a few px NARROWER than the label so the rendered text can never need more lines than were
+		// measured (which would clip the last line). WordBreak matches the label's own wrapping.
+		var needed = TextRenderer.MeasureText(_message.Text, _message.Font, new Size(width - 6, int.MaxValue), TextFormatFlags.WordBreak);
+		_message.Bounds = new Rectangle(_message.Left, _contentTop, width, needed.Height + 6);
+
+		var buttonsTop = _message.Bottom + 16;
+		_retry.Top = buttonsTop;
+		_cancel2.Top = buttonsTop;
+		_ok.Top = buttonsTop;
+
+		ClientSize = new Size(ClientSize.Width, buttonsTop + _retry.Height + ContentTopNoLogo);
 	}
 
 	protected override void OnLoad(EventArgs e)
