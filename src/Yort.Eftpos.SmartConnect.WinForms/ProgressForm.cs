@@ -17,6 +17,7 @@ internal sealed class ProgressForm : Form, IProgressView
 	private readonly Label _resultCaption;
 	private readonly Label _resultDetail;
 	private readonly Button _ok;
+	private readonly Font _baseFont;
 	private readonly Font _resultCaptionFont;
 	private System.Windows.Forms.Timer? _autoClose;
 	private TaskCompletionSource<bool>? _resultAck;
@@ -32,11 +33,19 @@ internal sealed class ProgressForm : Form, IProgressView
 		StartPosition = FormStartPosition.CenterScreen;
 		ClientSize = new Size(360, 160);
 
+		// 12pt baseline to match the pairing dialog (the WinForms default ~9pt reads small). Controls that set
+		// no Font of their own — the caption, the result detail and the OK button — inherit this. The form owns
+		// and disposes it; DialogChrome.ApplyTo may later replace Font if a caller supplies one.
+		_baseFont = new Font(Font.FontFamily, 12f);
+		Font = _baseFont;
+
 		_logo = new PictureBox { SizeMode = PictureBoxSizeMode.Zoom, Bounds = new Rectangle(12, 12, 64, 64), Visible = false };
 		_caption = new Label { Bounds = new Rectangle(12, 84, 336, 28), TextAlign = ContentAlignment.MiddleCenter };
 		_busy = new ProgressBar { Style = ProgressBarStyle.Marquee, Bounds = new Rectangle(12, 120, 336, 16) };
 
-		_resultCaptionFont = new Font(Font.FontFamily, 16, FontStyle.Bold);
+		// The outcome headline ("Approved"/"Declined" …) stays prominent — relative to the baseline (+4pt,
+		// bold) so it tracks the base size; at the 12pt default this is its established 16pt.
+		_resultCaptionFont = new Font(_baseFont.FontFamily, _baseFont.SizeInPoints + 4f, FontStyle.Bold);
 		_resultCaption = new Label { Bounds = new Rectangle(12, 24, 336, 40), TextAlign = ContentAlignment.MiddleCenter, Font = _resultCaptionFont };
 		_resultDetail = new Label { Bounds = new Rectangle(12, 68, 336, 36), TextAlign = ContentAlignment.MiddleCenter };
 		_ok = new Button { Text = "OK", Bounds = new Rectangle(140, 112, 80, 30), DialogResult = DialogResult.OK };
@@ -156,6 +165,7 @@ internal sealed class ProgressForm : Form, IProgressView
 			_autoClose?.Dispose();
 			_resultAck?.TrySetResult(false);
 			_resultCaptionFont?.Dispose();
+			_baseFont?.Dispose();
 		}
 
 		base.Dispose(disposing);
