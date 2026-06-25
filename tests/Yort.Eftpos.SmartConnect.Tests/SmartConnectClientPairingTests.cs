@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
 using Yort.Eftpos.SmartConnect.Tests.Helpers;
@@ -21,6 +22,13 @@ public class SmartConnectClientPairingTests
 			StateStore = Substitute.For<ISmartConnectTransactionState>(),
 			HttpClient = new HttpClient(handler)
 		};
+	}
+
+	private static SmartConnectClientConfiguration CreateConfiguration(MockHttpHandler handler, ListLogger logger)
+	{
+		var configuration = CreateConfiguration(handler);
+		configuration.Logger = logger;
+		return configuration;
 	}
 
 	private static SmartConnectPairingRequest CreatePairingRequest()
@@ -169,6 +177,56 @@ public class SmartConnectClientPairingTests
 
 		Assert.Equal(SmartConnectRequestDelivery.NotSent, thrown.Delivery);
 		Assert.Same(original, thrown.InnerException);
+	}
+
+	[Fact]
+	public async Task PairAsync_HttpError_LogsErrorWithStatusAndServiceMessage()
+	{
+		// Pairing previously logged on no failure path, so a rejected pairing left no diagnostic trail
+		// behind the operator-facing message. The status code and service text must reach the log.
+		var logger = new ListLogger();
+		var handler = new MockHttpHandler(_ => Task.FromResult(JsonResponse(HttpStatusCode.BadRequest, "{\"error\": \"Invalid pairing code\"}")));
+		using var client = new SmartConnectClient(CreateConfiguration(handler, logger));
+
+		await client.PairAsync("12345678", CreatePairingRequest());
+
+		var entry = Assert.Single(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("rejected pairing"));
+		Assert.Contains("400", entry.Message);
+		Assert.Contains("Invalid pairing code", entry.Message);
+		// Structured shape (H3): the status and message are named values, not pre-interpolated text.
+		Assert.Contains(entry.State, p => p.Key == "StatusCode" && (int)p.Value! == 400);
+		Assert.Contains(entry.State, p => p.Key == "ServiceError" && (string?)p.Value == "Invalid pairing code");
+	}
+
+	[Fact]
+	public async Task PairAsync_SuccessfulPairing_LogsNoError()
+	{
+		// The invariant the failure-logging must not break: a clean pairing emits no Error entry.
+		var logger = new ListLogger();
+		using var client = new SmartConnectClient(CreateConfiguration(SuccessHandler(), logger));
+
+		await client.PairAsync("12345678", CreatePairingRequest());
+
+		Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
+	}
+
+	[Fact]
+	public async Task PairAsync_TransportFailure_LogsWarningWithUnderlyingCause()
+	{
+		// The dialog/controller discards the transport exception and shows a generic message, so the real
+		// cause is lost unless the library logs it here — with the exception and the inner failure type.
+		var original = new HttpRequestException("send failed", new System.Net.Sockets.SocketException(10061 /* ConnectionRefused */));
+		var logger = new ListLogger();
+		var handler = new MockHttpHandler(_ => throw original);
+		using var client = new SmartConnectClient(CreateConfiguration(handler, logger));
+
+		await Assert.ThrowsAsync<SmartConnectTransportException>(() => client.PairAsync("12345678", CreatePairingRequest()));
+
+		var entry = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("transport"));
+		Assert.IsType<SmartConnectTransportException>(entry.Exception);
+		Assert.Contains("NotSent", entry.Message);
+		// The inner BCL exception type is the actionable cause an operator/support needs.
+		Assert.Contains(entry.State, p => p.Key == "FailureType" && (string?)p.Value == nameof(HttpRequestException));
 	}
 
 	[Fact]

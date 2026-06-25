@@ -116,22 +116,42 @@ public sealed class SmartConnectClient : IDisposable
 		{
 			httpRequest.Content = new StringContent(FormUrlEncoder.Encode(fields), Encoding.UTF8, "application/x-www-form-urlencoded");
 
-			using (var response = await SendAsync(httpRequest).ConfigureAwait(false))
+			try
 			{
-				if (response.IsSuccessStatusCode)
+				using (var response = await SendAsync(httpRequest).ConfigureAwait(false))
 				{
-					return new SmartConnectPairingResult { Success = true };
+					if (response.IsSuccessStatusCode)
+					{
+						return new SmartConnectPairingResult { Success = true };
+					}
+
+					var body = response.Content == null
+						? string.Empty
+						: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+					var errorMessage = GetErrorMessage(response, body);
+					// Pairing was the one operation that logged on no failure path, so a terse service error
+					// (e.g. a bare "HTTP 401") reached the operator with no diagnostic trail behind it. Log the
+					// status and message here as the transaction paths already do.
+					SafeLog(LogLevel.Error, null, "SmartConnect rejected pairing: HTTP {StatusCode} {ServiceError}",
+						(int)response.StatusCode, errorMessage);
+
+					return new SmartConnectPairingResult
+					{
+						Success = false,
+						ErrorMessage = errorMessage
+					};
 				}
-
-				var body = response.Content == null
-					? string.Empty
-					: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-
-				return new SmartConnectPairingResult
-				{
-					Success = false,
-					ErrorMessage = GetErrorMessage(response, body)
-				};
+			}
+			catch (SmartConnectTransportException ex)
+			{
+				// The dialog/controller deliberately shows a generic, reassuring message and discards this
+				// exception, so the underlying cause (socket/TLS/DNS) would otherwise be lost entirely. Log it
+				// here — the only place with both the operation context and the real cause — then rethrow to
+				// preserve the documented throw contract.
+				SafeLog(LogLevel.Warning, ex, "Pairing request failed at transport ({Delivery}, {FailureType}) — no service response received.",
+					ex.Delivery, ex.InnerException?.GetType().Name);
+				throw;
 			}
 		}
 	}
