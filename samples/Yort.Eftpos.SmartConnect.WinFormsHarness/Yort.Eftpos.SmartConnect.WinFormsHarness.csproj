@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Throwaway dev harness: drives the WinForms dialogs with synthetic data (no client, no network) so the
+       dialog look/feel can be iterated on locally without publishing packages or running the real OTS
+       integration. Not part of the shipped product; delete the folder when no longer needed. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Yort.Eftpos.SmartConnect.WinFormsHarness</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Yort.Eftpos.SmartConnect.WinForms\Yort.Eftpos.SmartConnect.WinForms.csproj" />
+  </ItemGroup>
+
+</Project>
