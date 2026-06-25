@@ -12,7 +12,7 @@
   <!-- NuGet package metadata. Unofficial: not affiliated with or endorsed by Shift4 / SmartPay. -->
   <PropertyGroup>
     <PackageId>Yort.Eftpos.SmartConnect.WinForms</PackageId>
-    <Version>0.1.0-preview.1</Version>
+    <Version>0.1.0-preview.2</Version>
     <Authors>Yortw</Authors>
     <Company>Yortw</Company>
     <Description>WinForms progress, outcome and pairing dialogs for the unofficial Yort.Eftpos.SmartConnect client (SmartPay / Shift4 SmartConnect, New Zealand). Not affiliated with or endorsed by Shift4 / SmartPay.</Description>
