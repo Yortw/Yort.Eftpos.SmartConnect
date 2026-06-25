@@ -20,6 +20,7 @@ internal sealed class PairingForm : Form, IPairingView
 	private readonly Button _retry;
 	private readonly Button _cancel2;
 	private readonly Button _ok;
+	private readonly Font _baseFont;
 	private readonly Font _messageFont;
 
 	private TaskCompletionSource<string?>? _codeResult;
@@ -28,12 +29,18 @@ internal sealed class PairingForm : Form, IPairingView
 
 	public PairingForm()
 	{
-		FormBorderStyle = FormBorderStyle.FixedDialog;
+		FormBorderStyle = FormBorderStyle.FixedSingle;
 		MaximizeBox = false;
 		MinimizeBox = false;
 		ShowInTaskbar = false;
 		StartPosition = FormStartPosition.CenterScreen;
 		ClientSize = new Size(380, 200);
+
+		// Default to a comfortable 12pt baseline (the WinForms default is ~9pt, which reads small on modern
+		// displays). Keep the platform default family rather than hard-coding "Segoe UI". The form owns this
+		// instance and disposes it. DialogChrome.ApplyTo may later replace Font if a caller supplies one.
+		_baseFont = new Font(Font.FontFamily, 12f);
+		Font = _baseFont;
 
 		_logo = new PictureBox { SizeMode = PictureBoxSizeMode.Zoom, Bounds = new Rectangle(12, 12, 56, 56), Visible = false };
 		_prompt = new Label { Bounds = new Rectangle(12, 76, 356, 24), Text = "Enter the pairing code shown on the terminal:" };
@@ -43,7 +50,9 @@ internal sealed class PairingForm : Form, IPairingView
 		_cancel = new Button { Text = "Cancel", Bounds = new Rectangle(292, 140, 76, 30) };
 		_busy = new ProgressBar { Style = ProgressBarStyle.Marquee, Bounds = new Rectangle(12, 140, 180, 16), Visible = false };
 
-		_messageFont = new Font(Font.FontFamily, 11, FontStyle.Bold);
+		// Emphasised relative to the baseline (+2pt, bold) so it tracks the base size instead of a fixed point
+		// value — at the 12pt default this is 14pt bold.
+		_messageFont = new Font(_baseFont.FontFamily, _baseFont.SizeInPoints + 2f, FontStyle.Bold);
 		_message = new Label { Bounds = new Rectangle(12, 76, 356, 52), Visible = false, Font = _messageFont };
 		_retry = new Button { Text = "Try again", Bounds = new Rectangle(206, 140, 76, 30), Visible = false };
 		_cancel2 = new Button { Text = "Cancel", Bounds = new Rectangle(292, 140, 76, 30), Visible = false };
@@ -103,6 +112,8 @@ internal sealed class PairingForm : Form, IPairingView
 		_retry.Visible = true;
 		_cancel2.Visible = true;
 		_ok.Visible = false;
+		AcceptButton = _retry;
+		CancelButton = _cancel2;
 		_retry.Focus();
 		_failureResult = new TaskCompletionSource<bool>();
 		return _failureResult.Task;
@@ -117,6 +128,9 @@ internal sealed class PairingForm : Form, IPairingView
 		_retry.Visible = false;
 		_cancel2.Visible = false;
 		_ok.Visible = true;
+		// Only OK exists here, so both Enter and Escape acknowledge.
+		AcceptButton = _ok;
+		CancelButton = _ok;
 		_ok.Focus();
 		_successAck = new TaskCompletionSource<bool>();
 		return _successAck.Task;
@@ -135,6 +149,9 @@ internal sealed class PairingForm : Form, IPairingView
 		_cancel2.Visible = false;
 		_ok.Visible = false;
 		_busy.Visible = false;
+		// Enter triggers Pair (no-op while disabled on a blank code), Escape triggers Cancel.
+		AcceptButton = _pair;
+		CancelButton = _cancel;
 	}
 
 	private void HidePromptControls()
@@ -165,6 +182,7 @@ internal sealed class PairingForm : Form, IPairingView
 			_failureResult?.TrySetResult(false);
 			_successAck?.TrySetResult(true);
 			_messageFont?.Dispose();
+			_baseFont?.Dispose();
 		}
 
 		base.Dispose(disposing);

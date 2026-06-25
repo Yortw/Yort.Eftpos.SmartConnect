@@ -14,8 +14,9 @@ internal sealed class DialogChrome
 	/// <summary>An optional logo image.</summary>
 	public Image? Logo { get; set; }
 
-	/// <summary>The dialog background colour.</summary>
-	public Color BackgroundColour { get; set; } = SystemColors.Window;
+	/// <summary>The dialog background colour. Defaults to pure white (not <see cref="SystemColors.Window"/>,
+	/// which a high-contrast or dark theme can repaint) for a consistent modern look; callers can override.</summary>
+	public Color BackgroundColour { get; set; } = Color.White;
 
 	/// <summary>The dialog foreground (text) colour.</summary>
 	public Color ForegroundColour { get; set; } = SystemColors.ControlText;
