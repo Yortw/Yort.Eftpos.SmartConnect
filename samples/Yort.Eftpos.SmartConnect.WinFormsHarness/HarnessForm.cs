@@ -76,6 +76,7 @@ internal sealed class HarnessForm : Form
 		AddScenario(panel, "Operation — Succeeded", () => RunOperation(SmartConnectOperationStatus.Succeeded, null));
 		AddScenario(panel, "Operation — Failed", () => RunOperation(SmartConnectOperationStatus.Failed, "Settlement was rejected by the acquirer."));
 		AddScenario(panel, "Progress states sequence", RunProgressStates);
+		AddScenario(panel, "Receipt viewer (sample)", () => RunReceipt(SampleReceipt));
 
 		var group = new GroupBox { Text = "Progress dialog", Dock = DockStyle.Fill };
 		group.Controls.Add(panel);
@@ -165,6 +166,37 @@ internal sealed class HarnessForm : Form
 			SetStatus("Progress: states sequence complete");
 		}
 	}
+
+	private async Task RunReceipt(string receipt)
+	{
+		using (var dialog = new SmartConnectReceiptDialog(this) { WindowTitle = "EFTPOS Receipt" })
+		{
+			await dialog.ShowAsync(receipt);
+			SetStatus("Receipt viewer closed");
+		}
+	}
+
+	// A fixed-width sample with aligned amount columns and rules, so the monospace rendering is obviously
+	// correct versus the proportional-font MessageBox it replaces.
+	private static readonly string SampleReceipt = string.Join(Environment.NewLine, new[]
+	{
+		"        PAYMARK CLSS",
+		"TEST TERMINAL              182",
+		"Wairau Rd",
+		"*----------------------------*",
+		"EFTPOS               TERMINAL",
+		"60036270         TRAN   000161",
+		"",
+		"      SETTLEMENT INQUIRY",
+		"",
+		"PURCHASE           $123.45    3",
+		"CASH OUT             $0.00    0",
+		"REFUND              $20.00    1",
+		"*----------------------------*",
+		"TOTAL              $103.45    4",
+		"*----------------------------*",
+		"      26/06/2026  14:32:07"
+	});
 
 	private static Func<string, Task<SmartConnectPairingResult>> FakePair(bool success, string? error)
 	{
