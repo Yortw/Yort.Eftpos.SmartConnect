@@ -11,7 +11,10 @@ internal static class DefaultCaptions
 	{
 		return new Dictionary<SmartConnectPollingState, string>
 		{
-			[SmartConnectPollingState.Polling] = "Processing payment…",
+			// Operation-neutral: this dialog serves non-financial operations (status, logon, settlement) as well
+			// as payments, so the default busy caption must not say "payment". Consumers override per operation
+			// via the public StateCaptions dictionary (e.g. a payment path can set "Processing payment…").
+			[SmartConnectPollingState.Polling] = "Processing…",
 			[SmartConnectPollingState.Delayed] = "Waiting for pinpad — it may be offline…",
 			[SmartConnectPollingState.BackingOff] = "Busy, retrying…",
 			[SmartConnectPollingState.NetworkError] = "Network problem, retrying…"
