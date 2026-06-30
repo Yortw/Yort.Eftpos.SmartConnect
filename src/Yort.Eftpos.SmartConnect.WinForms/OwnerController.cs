@@ -5,7 +5,7 @@ namespace Yort.Eftpos.SmartConnect.WinForms;
 
 /// <summary>Disables an owner window while the dialog is busy and restores it afterwards, giving
 /// modal-like behaviour without a thread-blocking <c>ShowDialog</c>. A null owner is a no-op (the
-/// dialog simply centres on screen). The enable action is injectable for testing.</summary>
+/// dialog simply centres on screen).</summary>
 internal sealed class OwnerController
 {
 	private readonly IWin32Window? _owner;

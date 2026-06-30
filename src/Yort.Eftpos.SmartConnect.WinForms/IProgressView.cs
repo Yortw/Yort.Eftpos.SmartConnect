@@ -3,8 +3,7 @@ using System.Threading.Tasks;
 
 namespace Yort.Eftpos.SmartConnect.WinForms;
 
-/// <summary>The view surface the <see cref="ProgressController"/> drives. Implemented by the internal
-/// progress form; faked in tests.</summary>
+/// <summary>The view surface the <see cref="ProgressController"/> drives. Implemented by the internal progress form</summary>
 internal interface IProgressView
 {
 	/// <summary>Shows the busy state with the given caption (called once, on the first report).</summary>

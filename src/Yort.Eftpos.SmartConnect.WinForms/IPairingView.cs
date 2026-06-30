@@ -2,8 +2,7 @@ using System.Threading.Tasks;
 
 namespace Yort.Eftpos.SmartConnect.WinForms;
 
-/// <summary>The view surface the <see cref="PairingController"/> drives. Implemented by the internal
-/// pairing form; faked in tests.</summary>
+/// <summary>The view surface the <see cref="PairingController"/> drives. Implemented by the internal pairing form.</summary>
 internal interface IPairingView
 {
 	/// <summary>Prompts for a pairing code; returns the entered code, or null if the operator cancelled.</summary>

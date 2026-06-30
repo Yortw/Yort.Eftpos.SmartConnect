@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Yort.Eftpos.SmartConnect.WinForms;
 
-/// <summary>Maps a core result status to a <see cref="ResultVisual"/>. Pure — no UI dependency.</summary>
+/// <summary>Maps a core result status to a <see cref="ResultVisual"/>.</summary>
 internal static class ResultVisuals
 {
 	/// <summary>Resolves the visual for a financial transaction status.</summary>

@@ -3,9 +3,7 @@ using System.Windows.Forms;
 
 namespace Yort.Eftpos.SmartConnect.WinForms;
 
-/// <summary>Holds the shared appearance settings for the dialogs and applies them to a form. Shared by
-/// composition rather than an internal base class, because a public dialog type cannot derive from an
-/// internal one (CS0060).</summary>
+/// <summary>Holds the shared appearance settings for the dialogs and applies them to a form.</summary>
 internal sealed class DialogChrome
 {
 	/// <summary>The window title. Defaults to "EFTPOS".</summary>
