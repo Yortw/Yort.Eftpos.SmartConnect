@@ -1,6 +1,6 @@
 # Yort.Eftpos.SmartConnect.WinForms
 
-WinForms progress/outcome and pairing dialogs for the unofficial
+WinForms progress/outcome, pairing, and receipt dialogs for the unofficial
 [`Yort.Eftpos.SmartConnect`](https://github.com/yortw/Yort.Eftpos.SmartConnect) client
 library (SmartPay / Shift4 SmartConnect, New Zealand).
 
@@ -9,7 +9,7 @@ library (SmartPay / Shift4 SmartConnect, New Zealand).
 
 ## Overview
 
-This package provides two ready-to-use WinForms dialogs:
+This package provides three ready-to-use WinForms dialogs:
 
 - **`SmartConnectProgressDialog`** — shows a "please wait" dialog while a progress-bearing
   SmartConnect operation runs, and optionally presents that operation's outcome afterwards
@@ -17,9 +17,13 @@ This package provides two ready-to-use WinForms dialogs:
 - **`SmartConnectPairingDialog`** — prompts the operator for the terminal's pairing code,
   runs the pairing attempt, shows the result, and lets the operator retry a bad code or
   cancel.
+- **`SmartConnectReceiptDialog`** — a passive viewer that displays an EFTPOS receipt (the
+  fixed-width, newline-delimited `Receipt` text) in a monospace font so its columns line up.
 
-Both dialogs support appearance customisation (window title, logo, colours, font) and
-parent-window ownership (centres on screen when no owner is supplied).
+All three dialogs support appearance customisation (window title, colours, font) and
+parent-window ownership (centres on screen when no owner is supplied). The progress and
+pairing dialogs additionally support a logo image; the receipt dialog omits it so the slip
+reproduces faithfully.
 
 ## Requirements
 
@@ -119,6 +123,41 @@ the operator cancelled at any point.
 
 Transport errors (`SmartConnectTransportException`) are caught and presented as retryable
 failures. Any other exception propagates out of `ShowAsync`.
+
+## `SmartConnectReceiptDialog`
+
+### Usage (passive viewer — you decide when to show a receipt)
+
+```csharp
+using var dialog = new SmartConnectReceiptDialog(this) { WindowTitle = "Receipt" };
+
+var result = await client.ProcessTransactionAsync(request, progress);
+if (!string.IsNullOrEmpty(result.Receipt))
+{
+    await dialog.ShowAsync(result.Receipt);
+}
+```
+
+Unlike the other two dialogs, this one drives no client call and owns no loop — the caller
+decides *when* to show a receipt (e.g. after a transaction, acquirer logon, or settlement
+inquiry returns one) and passes the text to `ShowAsync`. The method returns when the
+operator dismisses the dialog.
+
+The receipt is always rendered in a monospace font regardless of the `Font` setting, since
+fixed-width receipts only align in one. The `Font` property affects the chrome (title, OK
+button) only. Passing `null` to `ShowAsync` throws `ArgumentNullException`; an empty string
+shows an empty dialog.
+
+### Appearance customisation
+
+```csharp
+using var dialog = new SmartConnectReceiptDialog(this)
+{
+    WindowTitle = "Receipt",
+    BackgroundColour = Color.White,
+    ForegroundColour = Color.Black,
+};
+```
 
 ## Disclaimer
 
