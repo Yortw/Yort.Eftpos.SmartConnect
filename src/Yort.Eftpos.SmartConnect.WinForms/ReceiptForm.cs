@@ -11,7 +11,7 @@ namespace Yort.Eftpos.SmartConnect.WinForms;
 internal sealed class ReceiptForm : Form
 {
 	// Caps so a long/wide receipt can't grow the window past something sensible — it scrolls instead.
-	private const int Margin = 12;
+	private const int Spacing = 12;
 	private const int MaxClientWidth = 760;
 	private const int MaxReceiptHeight = 560;
 
@@ -96,15 +96,15 @@ internal sealed class ReceiptForm : Form
 
 		// Leave room for the textbox border and a scrollbar when the content is capped.
 		var scrollbar = SystemInformation.VerticalScrollBarWidth;
-		var receiptWidth = Math.Min(measured.Width + scrollbar + 8, MaxClientWidth - (Margin * 2));
+		var receiptWidth = Math.Min(measured.Width + scrollbar + 8, MaxClientWidth - (Spacing * 2));
 		var receiptHeight = Math.Min(measured.Height + scrollbar + 8, MaxReceiptHeight);
 
-		_receipt.Bounds = new Rectangle(Margin, Margin, receiptWidth, receiptHeight);
+		_receipt.Bounds = new Rectangle(Spacing, Spacing, receiptWidth, receiptHeight);
 
-		var buttonTop = _receipt.Bottom + Margin;
+		var buttonTop = _receipt.Bottom + Spacing;
 		_ok.Location = new Point(_receipt.Right - _ok.Width, buttonTop);
 
-		ClientSize = new Size(_receipt.Right + Margin, buttonTop + _ok.Height + Margin);
+		ClientSize = new Size(_receipt.Right + Spacing, buttonTop + _ok.Height + Spacing);
 	}
 
 	protected override void OnFormClosing(FormClosingEventArgs e)
