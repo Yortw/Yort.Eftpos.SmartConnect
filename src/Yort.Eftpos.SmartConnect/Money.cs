@@ -33,7 +33,33 @@ public readonly struct Money : IEquatable<Money>
 	/// whole cents, half away from zero — it is NOT rejected, so pass a cents-precise value (≤2 decimal places)
 	/// if you need exactness; use <see cref="FromCents(long)"/> when you already have cents.
 	/// </summary>
-	public static Money FromDecimal(decimal dollars) => new Money((long)Math.Round(dollars * 100m, MidpointRounding.AwayFromZero));
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="dollars"/> is too large to represent as a whole
+	/// number of cents in an <see cref="long"/> (roughly ±9.2e16 dollars).</exception>
+	public static Money FromDecimal(decimal dollars)
+	{
+		decimal cents;
+		try
+		{
+			cents = Math.Round(dollars * 100m, MidpointRounding.AwayFromZero);
+		}
+		catch (OverflowException)
+		{
+			// The dollars * 100m multiply overflowed the decimal type itself (pathologically large input).
+			// Surface it as the caller's bad argument, never a raw arithmetic fault.
+			throw new ArgumentOutOfRangeException(nameof(dollars), dollars, AmountTooLargeMessage);
+		}
+
+		// decimal holds values far beyond long, so range-check the cents before the narrowing cast — otherwise
+		// the (long) cast throws a bare OverflowException the caller can't distinguish from an internal bug.
+		if (cents < long.MinValue || cents > long.MaxValue)
+		{
+			throw new ArgumentOutOfRangeException(nameof(dollars), dollars, AmountTooLargeMessage);
+		}
+
+		return new Money((long)cents);
+	}
+
+	private const string AmountTooLargeMessage = "The amount is too large to represent as a monetary value.";
 
 	/// <summary>Returns the whole amount expressed in minor units (cents).</summary>
 	public long ToCents() => _cents;
