@@ -21,7 +21,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yort.Eftpos.SmartConnect.Wi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yort.Eftpos.SmartConnect.WinFormsDemo", "samples\Yort.Eftpos.SmartConnect.WinFormsDemo\Yort.Eftpos.SmartConnect.WinFormsDemo.csproj", "{26BB33A7-A850-40B5-BEF1-09AA0E7EEA29}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yort.Eftpos.SmartConnect.WinFormsHarness", "samples\Yort.Eftpos.SmartConnect.WinFormsHarness\Yort.Eftpos.SmartConnect.WinFormsHarness.csproj", "{BCF16DE7-FFEE-49A2-B65D-748C7C40A709}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yort.Eftpos.SmartConnect.WinFormsGallery", "samples\Yort.Eftpos.SmartConnect.WinFormsGallery\Yort.Eftpos.SmartConnect.WinFormsGallery.csproj", "{BCF16DE7-FFEE-49A2-B65D-748C7C40A709}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

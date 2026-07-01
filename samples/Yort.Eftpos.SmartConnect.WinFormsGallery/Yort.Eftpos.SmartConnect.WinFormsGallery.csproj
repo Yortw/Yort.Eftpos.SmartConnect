@@ -1,14 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Throwaway dev harness: drives the WinForms dialogs with synthetic data (no client, no network) so the
-       dialog look/feel can be iterated on locally without publishing packages or running the real OTS
-       integration. Not part of the shipped product; delete the folder when no longer needed. -->
+  <!-- Manual visual test app: drives the WinForms dialogs with synthetic data (no client, no network, no real
+       terminal) so their look and feel can be checked with a build-and-click loop whenever the dialogs change.
+       A development aid, not shipped (IsPackable=false). -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <IsPackable>false</IsPackable>
-    <RootNamespace>Yort.Eftpos.SmartConnect.WinFormsHarness</RootNamespace>
+    <RootNamespace>Yort.Eftpos.SmartConnect.WinFormsGallery</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

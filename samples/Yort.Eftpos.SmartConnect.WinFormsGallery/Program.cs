@@ -1,7 +1,7 @@
 using System;
 using System.Windows.Forms;
 
-namespace Yort.Eftpos.SmartConnect.WinFormsHarness;
+namespace Yort.Eftpos.SmartConnect.WinFormsGallery;
 
 internal static class Program
 {
@@ -10,6 +10,6 @@ internal static class Program
 	{
 		Application.EnableVisualStyles();
 		Application.SetCompatibleTextRenderingDefault(false);
-		Application.Run(new HarnessForm());
+		Application.Run(new GalleryForm());
 	}
 }
