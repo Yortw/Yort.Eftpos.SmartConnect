@@ -3,30 +3,17 @@
   <PropertyGroup>
     <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
     <UseWindowsForms>true</UseWindowsForms>
-    <LangVersion>latest</LangVersion>
-    <Nullable>enable</Nullable>
     <RootNamespace>Yort.Eftpos.SmartConnect.WinForms</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
-  <!-- NuGet package metadata. Unofficial: not affiliated with or endorsed by Shift4 / SmartPay. -->
+  <!-- Package-specific metadata; shared metadata, LangVersion, Nullable and warning policy live in Directory.Build.props.
+       This package versions independently of the core client. -->
   <PropertyGroup>
     <PackageId>Yort.Eftpos.SmartConnect.WinForms</PackageId>
     <Version>0.1.0-preview.4</Version>
-    <Authors>Yortw</Authors>
-    <Company>Yortw</Company>
     <Description>WinForms progress, outcome and pairing dialogs for the unofficial Yort.Eftpos.SmartConnect client (SmartPay / Shift4 SmartConnect, New Zealand). Not affiliated with or endorsed by Shift4 / SmartPay.</Description>
-    <Copyright>Copyright (c) 2026 Yortw</Copyright>
     <PackageTags>eftpos;smartconnect;smartpay;shift4;winforms;pos;nz</PackageTags>
-    <PackageProjectUrl>https://github.com/yortw/Yort.Eftpos.SmartConnect</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/yortw/Yort.Eftpos.SmartConnect</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageIcon>Icon.png</PackageIcon>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>

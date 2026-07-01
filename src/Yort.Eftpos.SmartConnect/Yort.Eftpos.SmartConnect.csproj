@@ -2,31 +2,18 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
-    <Nullable>enable</Nullable>
     <RootNamespace>Yort.Eftpos.SmartConnect</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- Single TFM today; structured as <TargetFrameworks> so adding net8.0 later is a one-line, non-breaking change. Keep the public API netstandard2.0-expressible. -->
   </PropertyGroup>
 
-  <!-- NuGet package metadata. Unofficial: not affiliated with or endorsed by Shift4 / SmartPay (precedent: Yort.Eftpos.Verifone.PosLink). -->
+  <!-- Package-specific metadata; shared metadata, LangVersion, Nullable and warning policy live in Directory.Build.props.
+       This package versions independently of the WinForms companion. -->
   <PropertyGroup>
     <PackageId>Yort.Eftpos.SmartConnect</PackageId>
     <Version>0.1.0-preview.2</Version>
-    <Authors>Yortw</Authors>
-    <Company>Yortw</Company>
     <Description>Unofficial .NET client for the SmartPay / Shift4 SmartConnect (New Zealand) EFTPOS cloud REST API: pairs a POS register to a payment terminal and processes card transactions via an asynchronous polling model, with crash-recovery state and HTTP 429 backoff. Not affiliated with or endorsed by Shift4 / SmartPay.</Description>
-    <Copyright>Copyright (c) 2026 Yortw</Copyright>
     <PackageTags>eftpos;smartconnect;smartpay;shift4;payments;nz;pos</PackageTags>
-    <PackageProjectUrl>https://github.com/yortw/Yort.Eftpos.SmartConnect</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/yortw/Yort.Eftpos.SmartConnect</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageIcon>Icon.png</PackageIcon>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>

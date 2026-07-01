@@ -1,0 +1,38 @@
+<Project>
+
+  <!-- Repository-wide defaults. Per-project csproj files keep only what genuinely differs: TargetFramework(s),
+       PackageId, Version (packages version INDEPENDENTLY - each bumps only when it changes), Description,
+       PackageTags, GenerateDocumentationFile, and project-specific references. -->
+
+  <PropertyGroup>
+    <!-- Pinned (not 'latest') so the C# language version is deterministic across contributors' SDKs. 12.0 matches
+         the net8 SDK this repo already requires to build; the code's actual feature floor is C# 10 (file-scoped
+         namespaces), so this leaves headroom without depending on whatever SDK a given machine has installed. -->
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+
+    <!-- Keep the tree warning-clean: a warning that would otherwise be ignored (e.g. CS0108) fails the build.
+         NuGet audit advisories (NU19xx) are deliberately kept as warnings, not errors, so a newly-disclosed CVE
+         against a pinned dependency surfaces loudly without hard-breaking every build before it can be addressed. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+  </PropertyGroup>
+
+  <!-- Shared NuGet package metadata. Ignored by non-packable (test/sample) projects. VERSIONS are intentionally
+       NOT here - each package owns its own version. Unofficial: not affiliated with or endorsed by Shift4 / SmartPay. -->
+  <PropertyGroup>
+    <Authors>Yortw</Authors>
+    <Company>Yortw</Company>
+    <Copyright>Copyright (c) 2026 Yortw</Copyright>
+    <PackageProjectUrl>https://github.com/Yortw/Yort.Eftpos.SmartConnect</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Yortw/Yort.Eftpos.SmartConnect</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>Icon.png</PackageIcon>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+</Project>
