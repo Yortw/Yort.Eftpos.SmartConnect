@@ -34,8 +34,9 @@ internal sealed class ReceiptForm : Form
 		Font = _baseFont;
 
 		// Receipts are fixed-width text and only align in a monospace font (the bug this dialog exists to fix
-		// was a receipt rendered in the proportional MessageBox font). Consolas ships on every supported
-		// Windows; GDI+ substitutes a monospace face if it is somehow absent.
+		// was a receipt rendered in the proportional MessageBox font). Consolas ships on every supported Windows;
+		// if it were somehow missing, GDI+ falls back to the default (proportional) UI font — so this relies on
+		// Consolas's ubiquity, not on a guaranteed monospace substitution.
 		_receiptFont = new Font("Consolas", 10f);
 		_receipt = new TextBox
 		{
