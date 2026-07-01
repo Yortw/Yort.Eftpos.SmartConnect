@@ -22,6 +22,11 @@ namespace Yort.Eftpos.SmartConnect;
 /// per-request timeout. An injected client is used as-is — its settings and lifetime belong to the consumer.</para>
 /// <para>TLS: the client does not force a protocol version. On .NET Framework the effective TLS set is a
 /// process-global host concern (<c>ServicePointManager.SecurityProtocol</c>); ensure the host enables TLS 1.2+.</para>
+/// <para>Cancellation: the public async methods intentionally take no <see cref="System.Threading.CancellationToken"/>
+/// (ADR Decision 3). SmartConnect has no cancel endpoint, so cancelling a poll would only orphan an in-flight
+/// payment; a poll that exceeds its internal maximum duration returns a terminal
+/// <see cref="SmartConnectTransactionStatus.Unknown"/> result rather than throwing. To shut down, persist the polling
+/// URL and resume after restart, or dispose the client mid-poll.</para>
 /// </remarks>
 public sealed class SmartConnectClient : IDisposable
 {
@@ -163,6 +168,10 @@ public sealed class SmartConnectClient : IDisposable
 	/// <see cref="SmartConnectTransactionResult.Status"/> and <see cref="SmartConnectTransactionResult.FailureCause"/>.
 	/// Always handle <see cref="SmartConnectTransactionStatus.Unknown"/> explicitly.
 	/// </summary>
+	/// <remarks>There is deliberately no <see cref="System.Threading.CancellationToken"/> (ADR Decision 3): the
+	/// transaction cannot be recalled once sent, so abandoning the wait would only orphan a possibly-live payment.
+	/// A wait that exceeds the internal maximum poll duration returns <see cref="SmartConnectTransactionStatus.Unknown"/>;
+	/// to abandon a wait during shutdown, dispose the client and resume from the persisted polling URL after restart.</remarks>
 	/// <param name="request">The transaction to process. <c>ClientTransactionRef</c> must be stable across a
 	/// restart for the same logical transaction — it is the crash-recovery key.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
