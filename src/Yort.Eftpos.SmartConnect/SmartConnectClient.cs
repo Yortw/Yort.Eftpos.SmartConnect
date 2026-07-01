@@ -913,6 +913,13 @@ public sealed class SmartConnectClient : IDisposable
 				throw new ArgumentException("AmountCash must not exceed AmountTotal (the cash-out is a component of AmountTotal).", "request");
 			}
 		}
+		else if (request.AmountCash.ToCents() != 0)
+		{
+			// AmountCash is only carried on Card.PurchasePlusCash. A non-zero value on any other type would be
+			// silently dropped from the wire — reject it so a mis-set cash-out is a loud caller error, not a
+			// customer who expected cash-out and didn't get it.
+			throw new ArgumentException("AmountCash is only valid for Card.PurchasePlusCash; leave it unset (zero) for other transaction types.", "request");
+		}
 
 		if (request.SaleData != null)
 		{

@@ -153,17 +153,17 @@ public class SmartConnectClientTransactionTests
 	}
 
 	[Fact]
-	public async Task Process_CardPurchase_NeverIncludesAmountCash()
+	public async Task Process_NonPurchasePlusCash_WithAmountCash_Throws()
 	{
-		// Invariant: AmountCash rides only on PurchasePlusCash — even if a caller sets it on another type.
+		// AmountCash is valid only for Card.PurchasePlusCash. Setting it on another type is a caller error, not a
+		// silently-dropped money field — reject it rather than quietly omitting it from the wire.
 		var handler = PendingResponseHandler();
 		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler)));
 
-		var request = CreateRequest();
+		var request = CreateRequest(); // Card.Purchase
 		request.AmountCash = Money.FromCents(250);
-		await client.ProcessTransactionAsync(request);
 
-		Assert.DoesNotContain("AmountCash", handler.Requests[0].Body);
+		await Assert.ThrowsAsync<ArgumentException>(() => client.ProcessTransactionAsync(request));
 	}
 
 	[Fact]
