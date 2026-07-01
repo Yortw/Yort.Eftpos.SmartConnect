@@ -32,6 +32,20 @@ public class MoneyJsonConverterTests
 	}
 
 	[Fact]
+	public void Read_FractionalNumber_ThrowsJsonException()
+	{
+		// A JSON number with a fraction cannot be whole cents. It must surface as JsonException (symmetric with the
+		// string branch) so the parser's ReadMoney guard absorbs it and defaults the amount rather than crashing the poll.
+		Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<Money>("5.50"));
+	}
+
+	[Fact]
+	public void Read_NumberExceedingInt64_ThrowsJsonException()
+	{
+		Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<Money>("99999999999999999999"));
+	}
+
+	[Fact]
 	public void Write_EmitsCentsAsString()
 	{
 		Assert.Equal("\"1234\"", JsonSerializer.Serialize(Money.FromCents(1234)));
