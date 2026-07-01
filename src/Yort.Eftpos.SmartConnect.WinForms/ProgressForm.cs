@@ -48,7 +48,10 @@ internal sealed class ProgressForm : Form, IProgressView
 		_resultCaptionFont = new Font(_baseFont.FontFamily, _baseFont.SizeInPoints + 4f, FontStyle.Bold);
 		_resultCaption = new Label { Bounds = new Rectangle(12, 24, 336, 40), TextAlign = ContentAlignment.MiddleCenter, Font = _resultCaptionFont };
 		_resultDetail = new Label { Bounds = new Rectangle(12, 68, 336, 36), TextAlign = ContentAlignment.MiddleCenter };
-		_ok = new Button { Text = "OK", Bounds = new Rectangle(140, 112, 80, 30), DialogResult = DialogResult.OK };
+		// OK acknowledges via CompleteResult — the same path as the auto-close tick. It deliberately does NOT set
+		// DialogResult: on this modeless form (shown via Show(), not ShowDialog()) that would add an inconsistent
+		// implicit close. The form is dismissed by Dispose (the caller's using-scope), matching the auto-close path.
+		_ok = new Button { Text = "OK", Bounds = new Rectangle(140, 112, 80, 30) };
 		_ok.Click += (_, _) => CompleteResult();
 		_resultPanel = new Panel { Dock = DockStyle.Fill, Visible = false };
 		_resultPanel.Controls.Add(_resultCaption);
