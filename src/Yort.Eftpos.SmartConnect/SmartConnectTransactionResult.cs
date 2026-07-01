@@ -22,7 +22,7 @@ public sealed class SmartConnectTransactionResult : SmartConnectResult
 	/// <see cref="SmartConnectResult.TransactionId"/>. Populated from the response's <c>ReferenceId</c> field,
 	/// which <c>Journal.GetTransResult</c> uses to carry the recovered (last) transaction's id while the
 	/// envelope <see cref="SmartConnectResult.TransactionId"/> identifies the journal query itself (ADR
-	/// Decision 10, verified 2026-06-16). Null on the normal transaction path, where
+	/// Decision 10). Null on the normal transaction path, where
 	/// <see cref="SmartConnectResult.TransactionId"/> already identifies the transaction.
 	/// </summary>
 	public string? ReferenceId { get; init; }

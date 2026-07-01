@@ -12,18 +12,16 @@ public sealed class SmartConnectTransactionRequest
 
 	/// <summary>
 	/// The total amount. Always positive — including for refunds ("a non-zero positive number, regardless
-	/// of the fact that this is a refund", per the official docs). For <c>Card.PurchasePlusCash</c> the
-	/// docs state this INCLUDES the <see cref="AmountCash"/> portion ("the total amount of the transaction,
-	/// including the cash-out amount") — documented 2026-06-10 and CONFIRMED on the dev terminal 2026-07-01: sent
-	/// AmountTotal=6000c/AmountCash=2000c, the receipt showed PURCHASE $40 / CASH $20 / TOTAL $60 and the
-	/// response echoed AmountTotal=6000c, i.e. AmountTotal is inclusive of AmountCash (the F9 item).
+	/// of the fact that this is a refund", per the official docs). For <c>Card.PurchasePlusCash</c> this INCLUDES
+	/// the <see cref="AmountCash"/> portion ("the total amount of the transaction, including the cash-out amount",
+	/// per the official docs) — i.e. AmountTotal is inclusive of AmountCash, not additional to it.
 	/// </summary>
 	public Money AmountTotal { get; set; }
 
 	/// <summary>
 	/// The cash-out amount; sent only when <see cref="TransactionType"/> is <c>Card.PurchasePlusCash</c>.
 	/// Per the official docs it is the "cash portion of the AmountTotal" — i.e. a component of
-	/// <see cref="AmountTotal"/>, not an addition to it. See the F9 note on <see cref="AmountTotal"/>.
+	/// <see cref="AmountTotal"/>, not an addition to it. See <see cref="AmountTotal"/>.
 	/// </summary>
 	public Money AmountCash { get; set; }
 
