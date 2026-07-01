@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build, test & pack
+    # Windows is required: the WinForms package targets net48 and net8.0-windows.
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore Yort.Eftpos.SmartConnect.sln
+
+      - name: Build
+        run: dotnet build Yort.Eftpos.SmartConnect.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Yort.Eftpos.SmartConnect.sln -c Release --no-build
+
+      # Pack validation: catch packaging/metadata breakage on every PR (this repo ships two NuGet packages).
+      - name: Pack
+        run: dotnet pack Yort.Eftpos.SmartConnect.sln -c Release --no-build
