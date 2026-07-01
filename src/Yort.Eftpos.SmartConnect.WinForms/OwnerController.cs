@@ -39,7 +39,8 @@ internal sealed class OwnerController
 		}
 	}
 
-	/// <summary>Re-enables the owner if (and only if) this controller disabled it. Idempotent.</summary>
+	/// <summary>Re-enables the owner if (and only if) this controller disabled it. Idempotent, and safe to call
+	/// after the owner window has been disposed (e.g. host shutdown while a dialog was busy).</summary>
 	public void Restore()
 	{
 		if (!_disabled)
@@ -47,7 +48,19 @@ internal sealed class OwnerController
 			return;
 		}
 
-		_setWindowEnabled(_owner!.Handle, true);
+		// Clear first: whether or not the native re-enable succeeds, this controller has done its part, and a
+		// second Restore()/Dispose() must neither retry nor re-throw.
 		_disabled = false;
+
+		try
+		{
+			_setWindowEnabled(_owner!.Handle, true);
+		}
+		catch (ObjectDisposedException)
+		{
+			// The owner was disposed while the dialog was busy (owner closed / app shutdown mid-transaction), so
+			// accessing its Handle throws. A disposed window is already re-enabled by the OS — there is nothing to
+			// restore, and letting this escape would mask the real result or bubble out of Dispose().
+		}
 	}
 }
