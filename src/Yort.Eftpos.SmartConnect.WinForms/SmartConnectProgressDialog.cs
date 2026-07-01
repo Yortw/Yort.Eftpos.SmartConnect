@@ -12,6 +12,10 @@ namespace Yort.Eftpos.SmartConnect.WinForms;
 /// <see cref="Progress"/> into a client call; the dialog auto-shows on the first report and closes on
 /// <see cref="Dispose"/>. Call a <c>ShowResultAsync</c> overload to present the outcome, or omit it to
 /// suppress the outcome screen.</summary>
+/// <remarks>A <c>ShowResultAsync</c> call returns when the operator acknowledges the outcome (or, for the
+/// timeout overloads, when the delay elapses); the dialog <em>window</em> is dismissed on <see cref="Dispose"/>
+/// — the usual pattern is a <c>using</c> around the call. Calling <c>ShowResultAsync</c> again before a prior
+/// call has returned pre-empts the earlier call: its awaiter completes without operator acknowledgement.</remarks>
 public sealed class SmartConnectProgressDialog : IDisposable
 {
 	private readonly ProgressForm _form;
@@ -75,8 +79,8 @@ public sealed class SmartConnectProgressDialog : IDisposable
 		return ShowResultAsync(result, autoCloseAfter: null);
 	}
 
-	/// <summary>Shows the outcome of a financial transaction, auto-closing after the given delay if the
-	/// operator does not acknowledge it first.</summary>
+	/// <summary>Shows the outcome of a financial transaction; the call returns after the given delay if the
+	/// operator does not acknowledge it first (the dialog window is dismissed on <see cref="Dispose"/>).</summary>
 	public Task ShowResultAsync(SmartConnectTransactionResult result, TimeSpan autoCloseAfter)
 	{
 		return ShowResultAsync(result, (TimeSpan?)autoCloseAfter);
@@ -88,8 +92,8 @@ public sealed class SmartConnectProgressDialog : IDisposable
 		return ShowResultAsync(result, autoCloseAfter: null);
 	}
 
-	/// <summary>Shows the outcome of a non-financial operation, auto-closing after the given delay if the
-	/// operator does not acknowledge it first.</summary>
+	/// <summary>Shows the outcome of a non-financial operation; the call returns after the given delay if the
+	/// operator does not acknowledge it first (the dialog window is dismissed on <see cref="Dispose"/>).</summary>
 	public Task ShowResultAsync(SmartConnectOperationResult result, TimeSpan autoCloseAfter)
 	{
 		return ShowResultAsync(result, (TimeSpan?)autoCloseAfter);

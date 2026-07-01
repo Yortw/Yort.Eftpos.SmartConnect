@@ -19,9 +19,11 @@ public sealed class SmartConnectTransactionRequest
 	public Money AmountTotal { get; set; }
 
 	/// <summary>
-	/// The cash-out amount; sent only when <see cref="TransactionType"/> is <c>Card.PurchasePlusCash</c>.
-	/// Per the official docs it is the "cash portion of the AmountTotal" — i.e. a component of
-	/// <see cref="AmountTotal"/>, not an addition to it. See <see cref="AmountTotal"/>.
+	/// The cash-out amount, valid <em>only</em> when <see cref="TransactionType"/> is <c>Card.PurchasePlusCash</c>
+	/// — where it is required and must be positive and not exceed <see cref="AmountTotal"/>. Per the official docs
+	/// it is the "cash portion of the AmountTotal" — i.e. a component of <see cref="AmountTotal"/>, not an addition
+	/// to it (see <see cref="AmountTotal"/>). Leave it unset (zero) for every other transaction type; a non-zero
+	/// value on another type is rejected with <see cref="System.ArgumentException"/> rather than silently dropped.
 	/// </summary>
 	public Money AmountCash { get; set; }
 
