@@ -112,6 +112,12 @@ internal static class TransportFailureClassifier
 				case SocketError.TryAgain:
 				case SocketError.NoData:
 				case SocketError.ConnectionRefused:
+				// Connect-phase routing/interface failures: no route means the request never left the machine, the
+				// same pre-send class as ConnectionRefused. On net48 these all surface as WebExceptionStatus.ConnectFailure
+				// (already NotSent above), so classifying them NotSent here keeps the two runtimes' verdicts consistent.
+				case SocketError.NetworkDown:
+				case SocketError.NetworkUnreachable:
+				case SocketError.HostUnreachable:
 					return NodeVerdict.NotSent;
 				default:
 					return NodeVerdict.Unknown;

@@ -6,12 +6,12 @@ using System.Windows.Forms;
 using Yort.Eftpos.SmartConnect;
 using Yort.Eftpos.SmartConnect.WinForms;
 
-namespace Yort.Eftpos.SmartConnect.WinFormsHarness;
+namespace Yort.Eftpos.SmartConnect.WinFormsGallery;
 
 /// <summary>A launcher of one button per dialog visual state, each driven by synthetic data — the pairing
 /// dialog via a fake callback, the progress dialog via fake <see cref="IProgress{T}"/> reports plus a fake
 /// result. No client and no network, so the dialog look/feel can be iterated on with a build-and-click loop.</summary>
-internal sealed class HarnessForm : Form
+internal sealed class GalleryForm : Form
 {
 	// Short delays so the busy/marquee states are actually visible before the outcome replaces them.
 	private const int BusyDelayMs = 500;
@@ -20,9 +20,9 @@ internal sealed class HarnessForm : Form
 
 	private readonly Label _status;
 
-	public HarnessForm()
+	public GalleryForm()
 	{
-		Text = "SmartConnect Dialog Harness";
+		Text = "SmartConnect Dialog Gallery";
 		StartPosition = FormStartPosition.CenterScreen;
 		ClientSize = new Size(580, 470);
 

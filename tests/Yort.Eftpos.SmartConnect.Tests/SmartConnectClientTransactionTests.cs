@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -107,6 +108,48 @@ public class SmartConnectClientTransactionTests
 		Assert.Equal(
 			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.PurchasePlusCash&AmountTotal=1250&AmountCash=250",
 			handler.Requests[0].Body);
+	}
+
+	[Fact]
+	public async Task Process_Refund_SendsRefundTypeWithPositiveAmount()
+	{
+		// A refund's direction is carried by the TransactionType, not the sign — Card.Refund with a positive AmountTotal.
+		var handler = PendingResponseHandler();
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler)));
+
+		var request = CreateRequest();
+		request.TransactionType = SmartConnectTransactionType.CardRefund;
+		await client.ProcessTransactionAsync(request);
+
+		Assert.Equal(
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.Refund&AmountTotal=1250",
+			handler.Requests[0].Body);
+	}
+
+	[Fact]
+	public async Task Process_UnderHostileCulture_SendsInvariantAmount()
+	{
+		// The amount is built via FromDecimal(12.50) and must serialise as integer cents (1250) even under a culture
+		// whose decimal separator is ',' — proves the money wire path is InvariantCulture end to end.
+		var original = CultureInfo.CurrentCulture;
+		try
+		{
+			CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+			var handler = PendingResponseHandler();
+			using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler)));
+
+			var request = CreateRequest();
+			request.AmountTotal = Money.FromDecimal(12.50m);
+			await client.ProcessTransactionAsync(request);
+
+			Assert.Equal(
+				"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.Purchase&AmountTotal=1250",
+				handler.Requests[0].Body);
+		}
+		finally
+		{
+			CultureInfo.CurrentCulture = original;
+		}
 	}
 
 	[Fact]

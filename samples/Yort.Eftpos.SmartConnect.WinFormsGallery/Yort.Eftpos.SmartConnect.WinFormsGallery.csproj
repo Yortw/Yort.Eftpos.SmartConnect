@@ -1,10 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Manual visual test app: drives the WinForms dialogs with synthetic data (no client, no network, no real
+       terminal) so their look and feel can be checked with a build-and-click loop whenever the dialogs change.
+       A development aid, not shipped (IsPackable=false). -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <IsPackable>false</IsPackable>
+    <RootNamespace>Yort.Eftpos.SmartConnect.WinFormsGallery</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

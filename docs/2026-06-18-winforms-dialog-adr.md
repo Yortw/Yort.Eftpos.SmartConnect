@@ -73,7 +73,7 @@ timeout) instead of two methods with optional parameters.
 ## Decision 4 — Multi-target `net48` + `net8.0-windows`
 
 **Context.** WinForms is unavailable on `netstandard`; the core is `netstandard2.0`. The
-near-term consumer (OTS) is on .NET Framework 4.x. An assembly compiled for `net48` can only be
+near-term consumer is a point-of-sale application on .NET Framework 4.x. An assembly compiled for `net48` can only be
 referenced by an app targeting `net48`+.
 
 **Decision.** `<TargetFrameworks>net48;net8.0-windows</TargetFrameworks>`.
@@ -85,7 +85,7 @@ runtime; `net8.0-windows` covers current .NET. Clean modern multi-target.
 floor can be lowered later (add `net472`, etc.) if a real consumer needs it, without breaking
 existing consumers.
 
-**Options considered.** `net8.0-windows` only — rejected: excludes the .NET Framework OTS app.
+**Options considered.** `net8.0-windows` only — rejected: excludes the .NET Framework consumer app.
 `net472` + `net8.0-windows` — deferred: only if a sub-4.8 consumer actually appears.
 
 ## Decision 5 — Same repo, separate project and package

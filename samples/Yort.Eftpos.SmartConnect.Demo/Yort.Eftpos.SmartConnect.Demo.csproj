@@ -5,8 +5,6 @@
     <!-- net48 mirrors the POS clients this library targets; running the same probes on both TFMs is the
          cross-runtime transport-shape verification (R4). -->
     <TargetFrameworks>net48;net8.0</TargetFrameworks>
-    <LangVersion>latest</LangVersion>
-    <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <RootNamespace>Yort.Eftpos.SmartConnect.Demo</RootNamespace>
   </PropertyGroup>

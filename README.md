@@ -1,5 +1,7 @@
 # Yort.Eftpos.SmartConnect
 
+[![CI](https://github.com/Yortw/Yort.Eftpos.SmartConnect/actions/workflows/ci.yml/badge.svg)](https://github.com/Yortw/Yort.Eftpos.SmartConnect/actions/workflows/ci.yml)
+
 A .NET client library for the **SmartPay / Shift4 SmartConnect** EFTPOS integration (New Zealand) — a cloud REST API that pairs a point-of-sale register to a payment terminal and processes card transactions via an asynchronous polling model.
 
 > ⚠️ **Pre-release / work in progress.** Under active initial development; pre-release builds only, not yet on public NuGet. The API may change before 1.0.

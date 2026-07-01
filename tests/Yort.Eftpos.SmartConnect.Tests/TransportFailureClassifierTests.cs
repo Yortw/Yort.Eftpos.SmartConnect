@@ -54,6 +54,11 @@ public class TransportFailureClassifierTests
 	[InlineData(SocketError.TryAgain)]
 	[InlineData(SocketError.NoData)]
 	[InlineData(SocketError.ConnectionRefused)]
+	// Connect-phase routing/interface failures — no route means no bytes left the machine, same class as
+	// ConnectionRefused. These align the modern-.NET verdict with net48, where they surface as ConnectFailure (NotSent).
+	[InlineData(SocketError.NetworkDown)]
+	[InlineData(SocketError.NetworkUnreachable)]
+	[InlineData(SocketError.HostUnreachable)]
 	public void Classify_SocketException_PreSendCode_IsNotSent(SocketError socketError)
 	{
 		var exception = new HttpRequestException("send failed", new SocketException((int)socketError));

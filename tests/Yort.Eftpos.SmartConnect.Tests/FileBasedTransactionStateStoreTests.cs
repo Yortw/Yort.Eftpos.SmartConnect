@@ -211,7 +211,7 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 	[Fact]
 	public async Task Save_OverCompletedRecord_ResetsToFreshPendingSentinel()
 	{
-		// Gate-refusal/NotSent retries reuse the same OTS ref — a re-tender must start clean.
+		// Gate-refusal/NotSent retries reuse the same client-transaction ref — a re-tender must start clean.
 		var store = NewStore();
 		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
 		await store.UpdatePollingDetailsAsync("ref-1", "https://poll/old", "txn-old");
