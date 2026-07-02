@@ -29,4 +29,15 @@ public class DialogTimeoutsTests
 	{
 		Assert.Equal(int.MaxValue, DialogTimeouts.ToIntervalMs(TimeSpan.FromDays(365)));
 	}
+
+	// A positive-but-sub-millisecond span passes the <= 0 guard yet truncates to 0, which Timer.Interval
+	// rejects — defeating the whole point of this "single guarded conversion". It must floor to 1ms.
+	[Theory]
+	[InlineData(1)]                 // TimeSpan.FromTicks(1) — smallest positive
+	[InlineData(5000)]              // 0.5ms
+	[InlineData(9999)]              // just under 1ms
+	public void ToIntervalMs_SubMillisecondPositive_ReturnsAtLeastOne(long ticks)
+	{
+		Assert.Equal(1, DialogTimeouts.ToIntervalMs(TimeSpan.FromTicks(ticks)));
+	}
 }

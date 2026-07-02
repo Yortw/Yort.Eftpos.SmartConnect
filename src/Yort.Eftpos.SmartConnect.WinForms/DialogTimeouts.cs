@@ -22,6 +22,8 @@ internal static class DialogTimeouts
 			return int.MaxValue;
 		}
 
-		return (int)ms;
+		// A positive-but-sub-millisecond span truncates to 0, which Timer.Interval rejects — floor to 1ms so
+		// this guard covers the whole positive range, not just >= 1ms.
+		return Math.Max(1, (int)ms);
 	}
 }
