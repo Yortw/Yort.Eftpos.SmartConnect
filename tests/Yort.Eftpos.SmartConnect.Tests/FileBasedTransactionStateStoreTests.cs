@@ -375,13 +375,18 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 	// --- Task 12.5 (H2): the store is genuinely asynchronous ---
 
 	[Fact]
-	public void Save_WithRetryDelayPending_ReturnsIncompleteTaskImmediately()
+	public async Task Save_WithRetryDelayPending_ReturnsIncompleteTaskImmediately()
 	{
 		// (H2) A secretly-synchronous implementation completes the work AND the retry wait before
 		// returning, so this assertion line would only run after the delay with a completed task. The
 		// async implementation returns at the first Task.Delay await.
+		// The retry delay is deliberately wide (2s): the incompleteness check runs microseconds after the
+		// synchronous return, so only a multi-second scheduler/GC pause in that gap could complete the task
+		// early — a wide margin makes that impossible on a loaded CI runner. The task is then awaited (not
+		// abandoned) so its deferred second write lands in the fixture directory BEFORE Dispose deletes it,
+		// and no faulted task escapes unobserved.
 		var store = NewStore();
-		store.RetryDelay = TimeSpan.FromMilliseconds(200);
+		store.RetryDelay = TimeSpan.FromSeconds(2);
 		var attempts = 0;
 		store.WriteFileAsync = (path, contents) =>
 		{
@@ -398,6 +403,10 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 		var task = store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
 
 		Assert.False(task.IsCompleted);
+
+		await task;
+		Assert.Equal(2, attempts);
+		Assert.Single(await store.GetPendingTransactionsAsync());
 	}
 
 	// --- Task 12.5 (H4): the semaphore is released when a write faults ---

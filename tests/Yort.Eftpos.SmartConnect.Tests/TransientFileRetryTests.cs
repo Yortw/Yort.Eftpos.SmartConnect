@@ -143,12 +143,15 @@ public class TransientFileRetryTests
 	}
 
 	[Fact]
-	public void Execute_RetryDelay_DoesNotBlockTheCaller()
+	public async Task Execute_RetryDelay_DoesNotBlockTheCaller()
 	{
 		// (H2) The motivating behaviour of Task 12.5: the old Thread.Sleep implementation completed the
 		// whole retry (including the wait) before returning, so this assertion line would only execute
 		// after the delay with a COMPLETED task. The async implementation returns at the first
 		// Task.Delay await — incomplete.
+		// The delay is deliberately wide (2s): the check runs microseconds after the synchronous return, so
+		// only a multi-second pause in that gap could complete the task early — an implausible margin. The
+		// task is then awaited so nothing is left running unobserved past the test.
 		var attempts = 0;
 		var task = TransientFileRetry.ExecuteAsync(() =>
 		{
@@ -159,9 +162,12 @@ public class TransientFileRetryTests
 			}
 
 			return Task.CompletedTask;
-		}, 3, TimeSpan.FromMilliseconds(200), onRetry: null);
+		}, 3, TimeSpan.FromSeconds(2), onRetry: null);
 
 		Assert.False(task.IsCompleted);
+
+		await task;
+		Assert.Equal(2, attempts);
 	}
 
 	private sealed class FailTwiceThenSucceed
