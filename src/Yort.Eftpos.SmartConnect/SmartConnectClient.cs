@@ -32,7 +32,15 @@ public sealed class SmartConnectClient : IDisposable
 {
 	private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
-	private readonly SmartConnectClientConfiguration _config;
+	// Configuration is snapshotted at construction, never read live: Validate() runs once at construction,
+	// so reading these back from a caller-held (mutable) config object would let a post-construction mutation
+	// bypass the validated invariants mid-flight (e.g. PollInterval below the minimum, or StateStore nulled).
+	private readonly ISmartConnectTransactionState _stateStore;
+	private readonly ILogger? _logger;
+	private readonly Func<HttpRequestMessage, Task>? _authorizeRequestAsync;
+	private readonly TimeSpan _pollInterval;
+	private readonly TimeSpan _maxPollDuration;
+	private readonly TimeSpan _backoffCap;
 	private readonly HttpClient _httpClient;
 	private readonly bool _ownsHttpClient;
 	private readonly string _baseUrl;
@@ -52,7 +60,12 @@ public sealed class SmartConnectClient : IDisposable
 		}
 
 		configuration.Validate();
-		_config = configuration;
+		_stateStore = configuration.StateStore!;
+		_logger = configuration.Logger;
+		_authorizeRequestAsync = configuration.AuthorizeRequestAsync;
+		_pollInterval = configuration.PollInterval;
+		_maxPollDuration = configuration.MaxPollDuration;
+		_backoffCap = configuration.BackoffCap;
 		_baseUrl = configuration.BaseUrl!.AbsoluteUri.TrimEnd('/');
 
 		if (configuration.HttpClient != null)
@@ -197,7 +210,7 @@ public sealed class SmartConnectClient : IDisposable
 		// refusal is a result, not an escaping store exception type (ADR Decisions 9/10).
 		try
 		{
-			await _config.StateStore!.SaveTransactionAttemptAsync(request.ClientTransactionRef, request.TransactionType, request.AmountTotal.ToCents()).ConfigureAwait(false);
+			await _stateStore.SaveTransactionAttemptAsync(request.ClientTransactionRef, request.TransactionType, request.AmountTotal.ToCents()).ConfigureAwait(false);
 		}
 		catch (Exception ex)
 		{
@@ -310,7 +323,7 @@ public sealed class SmartConnectClient : IDisposable
 
 			try
 			{
-				await _config.StateStore!.UpdatePollingDetailsAsync(request.ClientTransactionRef, initial.PollingUrl!, initial.TransactionId ?? string.Empty).ConfigureAwait(false);
+				await _stateStore.UpdatePollingDetailsAsync(request.ClientTransactionRef, initial.PollingUrl!, initial.TransactionId ?? string.Empty).ConfigureAwait(false);
 			}
 			catch (Exception ex)
 			{
@@ -696,13 +709,13 @@ public sealed class SmartConnectClient : IDisposable
 	private async Task<SmartConnectTransactionResult> PollForResultAsync(string pollingUrl, string? transactionId, string? clientTransactionRef, IProgress<SmartConnectPollingStatus>? progress)
 	{
 		var startedAt = Clock();
-		var deadline = startedAt + _config.MaxPollDuration;
+		var deadline = startedAt + _maxPollDuration;
 
 		// 429 backoff state: the exponential doubles from the configured interval per consecutive 429
 		// (capped at BackoffCap) and resets on any successful poll; a Retry-After header overrides the
 		// exponential for that wait without disturbing it.
-		var nextDelay = _config.PollInterval;
-		var backoffInterval = _config.PollInterval;
+		var nextDelay = _pollInterval;
+		var backoffInterval = _pollInterval;
 		var attempt = 0;
 
 		while (true)
@@ -733,7 +746,7 @@ public sealed class SmartConnectClient : IDisposable
 			}
 
 			await PollDelay(nextDelay).ConfigureAwait(false);
-			nextDelay = _config.PollInterval;
+			nextDelay = _pollInterval;
 			attempt++;
 			SafeLog(LogLevel.Debug, null, "Poll attempt {Attempt} (transactionId {TransactionId}).", attempt, transactionId);
 
@@ -744,7 +757,7 @@ public sealed class SmartConnectClient : IDisposable
 				{
 					if ((int)response.StatusCode == 429)
 					{
-						backoffInterval = Min(TimeSpan.FromTicks(backoffInterval.Ticks * 2), _config.BackoffCap);
+						backoffInterval = Min(TimeSpan.FromTicks(backoffInterval.Ticks * 2), _backoffCap);
 						nextDelay = GetRetryAfterDelay(response) ?? backoffInterval;
 						SafeLog(LogLevel.Debug, null, "Rate-limited (HTTP 429) for {ClientTransactionRef} — backing off; next poll in {NextDelaySeconds}s.", clientTransactionRef, (int)nextDelay.TotalSeconds);
 						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.BackingOff });
@@ -789,7 +802,7 @@ public sealed class SmartConnectClient : IDisposable
 					}
 
 					// A successful poll resets the 429 backoff to the configured interval.
-					backoffInterval = _config.PollInterval;
+					backoffInterval = _pollInterval;
 
 					if (poll.Progress == PollProgress.Completed)
 					{
@@ -870,7 +883,7 @@ public sealed class SmartConnectClient : IDisposable
 			return SmartConnectClientConfiguration.MinimumPollInterval;
 		}
 
-		return value > _config.BackoffCap ? _config.BackoffCap : value;
+		return value > _backoffCap ? _backoffCap : value;
 	}
 
 	private static TimeSpan Min(TimeSpan left, TimeSpan right) => left < right ? left : right;
@@ -974,7 +987,7 @@ public sealed class SmartConnectClient : IDisposable
 	{
 		try
 		{
-			await _config.StateStore!.UpdateCompletedAsync(clientTransactionRef, status).ConfigureAwait(false);
+			await _stateStore.UpdateCompletedAsync(clientTransactionRef, status).ConfigureAwait(false);
 		}
 		catch (Exception ex)
 		{
@@ -987,7 +1000,7 @@ public sealed class SmartConnectClient : IDisposable
 	// (G7) the polling URL must never appear as a template argument either.
 	private void SafeLog(LogLevel level, Exception? exception, string messageTemplate, params object?[] args)
 	{
-		var logger = _config.Logger;
+		var logger = _logger;
 		if (logger == null)
 		{
 			return;
@@ -1026,7 +1039,7 @@ public sealed class SmartConnectClient : IDisposable
 	{
 		// Consumer code — deliberately OUTSIDE the transport wrap so a bug in their callback isn't
 		// disguised as a transport failure.
-		var authorize = _config.AuthorizeRequestAsync;
+		var authorize = _authorizeRequestAsync;
 		if (authorize != null)
 		{
 			await authorize(request).ConfigureAwait(false);

@@ -299,4 +299,55 @@ public class SmartConnectClientStateLifecycleTests
 		Assert.False(handler.Requests[0].Headers.ContainsKey("Authorization"));
 		Assert.False(handler.Requests[0].Headers.ContainsKey("X-Api-Key"));
 	}
+
+	// --- Configuration is snapshotted at construction (Validate runs once; live reads would let a consumer
+	// invalidate the validated invariants mid-flight) ---
+
+	[Fact]
+	public async Task Process_ConfigStateStoreSwappedAfterConstruction_UsesTheStoreCapturedAtConstruction()
+	{
+		// The client must snapshot the store at construction. A consumer mutating the shared config object
+		// afterward must not redirect the crash-recovery writes (nor, by nulling it, turn a live read into
+		// an NRE the broad catch mislabels as StateStoreFailure).
+		var originalStore = new InMemoryTransactionStateStore();
+		var config = CreateConfiguration(PendingResponseHandler(), originalStore);
+		using var client = WithVirtualTime(new SmartConnectClient(config));
+
+		var replacementStore = new InMemoryTransactionStateStore();
+		config.StateStore = replacementStore;
+
+		await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Contains("Save:" + Ref, originalStore.CallLog);
+		Assert.Empty(replacementStore.CallLog);
+	}
+
+	[Fact]
+	public async Task Process_ConfigPollIntervalChangedAfterConstruction_PollsAtTheIntervalCapturedAtConstruction()
+	{
+		var store = new InMemoryTransactionStateStore();
+		var config = CreateConfiguration(PendingResponseHandler(), store);
+		config.PollInterval = TimeSpan.FromSeconds(3);
+		config.MaxPollDuration = TimeSpan.FromSeconds(7); // room for at least two poll delays before timeout
+		using var client = new SmartConnectClient(config);
+
+		var delays = new List<TimeSpan>();
+		var now = new DateTimeOffset(2026, 6, 10, 12, 0, 0, TimeSpan.Zero);
+		client.Clock = () => now;
+		client.PollDelay = delay =>
+		{
+			delays.Add(delay);
+			now += delay;
+			return Task.CompletedTask;
+		};
+
+		// Mutate AFTER construction to a value that is also invalid against MaxPollDuration (30s > 7s) —
+		// it must be ignored entirely, both as the poll cadence and as a bypass of Validate's invariant.
+		config.PollInterval = TimeSpan.FromSeconds(30);
+
+		await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.NotEmpty(delays);
+		Assert.All(delays, d => Assert.Equal(TimeSpan.FromSeconds(3), d));
+	}
 }
