@@ -35,6 +35,45 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 	private FileBasedTransactionStateStore NewStore() => new FileBasedTransactionStateStore(_directory);
 
 	[Fact]
+	public async Task GetPending_SkipsCorruptRecord_LogsWarningNamingTheFile()
+	{
+		// A skipped record is the ONLY clue support gets when a charged sale has no POS record (there is
+		// no automated recovery) — silence here turns a torn write into an unexplainable mystery.
+		var logger = new ListLogger();
+		var store = new FileBasedTransactionStateStore(_directory, logger);
+		await store.SaveTransactionAttemptAsync("ref-good", SmartConnectTransactionType.CardPurchase, 500);
+		File.WriteAllText(Path.Combine(_directory, "corrupt.json"), "{ this is not valid json");
+
+		var pending = (await store.GetPendingTransactionsAsync()).ToList();
+
+		Assert.Single(pending);
+		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("corrupt.json"));
+	}
+
+	[Fact]
+	public async Task GetPending_UnauthorizedAccessOnOneFile_IsSkippedAndLogged_NotThrown()
+	{
+		// UnauthorizedAccessException is NOT an IOException subclass: one bad-ACL file (AV/backup/admin
+		// tooling) must not make every pending transaction unenumerable — the doc contract says skipped.
+		var logger = new ListLogger();
+		var store = new FileBasedTransactionStateStore(_directory, logger);
+		await store.SaveTransactionAttemptAsync("ref-good", SmartConnectTransactionType.CardPurchase, 500);
+		await store.SaveTransactionAttemptAsync("ref-denied", SmartConnectTransactionType.CardPurchase, 700);
+
+		var deniedPath = Path.Combine(_directory, "ref-denied.json");
+		var originalRead = store.ReadFileAsync;
+		store.ReadFileAsync = path => string.Equals(path, deniedPath, StringComparison.OrdinalIgnoreCase)
+			? Task.FromException<string>(new UnauthorizedAccessException("Access to the path is denied."))
+			: originalRead(path);
+
+		var pending = (await store.GetPendingTransactionsAsync()).ToList();
+
+		var record = Assert.Single(pending);
+		Assert.Equal("ref-good", record.ClientTransactionRef);
+		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("ref-denied.json"));
+	}
+
+	[Fact]
 	public void Constructor_CreatesMissingDirectory()
 	{
 		Assert.False(Directory.Exists(_directory));

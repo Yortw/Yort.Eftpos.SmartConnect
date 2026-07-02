@@ -19,9 +19,13 @@ namespace Yort.Eftpos.SmartConnect;
 /// <para>Genuinely asynchronous: file IO uses async streams and retry waits use <c>Task.Delay</c>, so store
 /// calls never block the caller's thread — the first store call runs before the client's first yield, which
 /// on a WinForms POS is the UI thread at tender start.</para>
-/// <para>Writes are atomic (write-temp-then-replace) so a crash mid-write cannot truncate a record. The
-/// directory is per-store; point each register at its own directory. Files contain the polling URL, which
-/// carries a bearer token — restrict access to the directory accordingly.</para>
+/// <para>Writes are atomic (write-temp-then-replace) and the data is flushed to disk before the swap, so
+/// neither a process crash nor a power cut can expose a truncated/torn record — a reader always sees the
+/// old version or the new one, complete. The rename itself is not write-through, so a power cut in the
+/// instant after a write can lose that newest version (never corrupt it); products needing absolute
+/// power-loss durability should use a database-backed store. The directory is per-store; point each
+/// register at its own directory. Files contain the polling URL, which carries a bearer token — restrict
+/// access to the directory accordingly.</para>
 /// <para>The attempt record is pre-sized to <see cref="ReservationBytes"/> so passing the pre-POST gate
 /// predicts the later polling-details update succeeding (ADR Decision 10). Atomicity deliberately wins over
 /// prediction purity: the temp-then-replace step transiently needs ~2× the reservation, so the gate is a
@@ -53,6 +57,9 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 
 	/// <summary>The file-write operation. Internal seam so tests can inject IO failures deterministically.</summary>
 	internal Func<string, string, Task> WriteFileAsync { get; set; } = DefaultWriteFileAsync;
+
+	/// <summary>The file-read operation. Internal seam so tests can inject IO failures deterministically.</summary>
+	internal Func<string, Task<string>> ReadFileAsync { get; set; } = DefaultReadFileAsync;
 
 	/// <summary>Creates a store backed by the given directory, creating it if it does not exist.</summary>
 	/// <param name="directory">The directory in which to store transaction-state files.</param>
@@ -157,7 +164,8 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 	}
 
 	/// <inheritdoc />
-	/// <remarks>Individual unreadable/corrupt records and leftover temp files are skipped, not thrown.</remarks>
+	/// <remarks>Individual unreadable/corrupt records and leftover temp files are skipped (with a Warning
+	/// logged naming the file), not thrown.</remarks>
 	/// <exception cref="IOException">The state directory could not be enumerated.</exception>
 	public async Task<IEnumerable<PendingTransaction>> GetPendingTransactionsAsync()
 	{
@@ -264,18 +272,19 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 		return record;
 	}
 
-	private static async Task<StoredRecord?> TryReadAsync(string path)
+	private async Task<StoredRecord?> TryReadAsync(string path)
 	{
 		try
 		{
 			return JsonSerializer.Deserialize<StoredRecord>(await ReadFileAsync(path).ConfigureAwait(false), JsonOptions);
 		}
-		catch (IOException)
+		catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
 		{
-			return null;
-		}
-		catch (JsonException)
-		{
+			// UnauthorizedAccessException is NOT an IOException — without it here, one bad-ACL file blocks
+			// the entire enumeration. And a skipped record must leave a trace: with no automated recovery,
+			// this Warning is the only clue support gets when a charged sale has no POS record. File name
+			// only — the content holds the polling URL (bearer token) and is never logged.
+			SafeLog(LogLevel.Warning, ex, "Skipped unreadable/corrupt transaction-state file {FileName} during pending-transaction enumeration. If a transaction is missing from recovery, this is why — inspect the file and reconcile manually.", Path.GetFileName(path));
 			return null;
 		}
 	}
@@ -290,6 +299,11 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 		// Replace is atomic when the destination exists; Move is atomic for the first write. Either way a
 		// reader/recovery never sees a half-written .json. These rename operations have no async API and
 		// are metadata-fast — deliberately left synchronous.
+		// KNOWN GAP (accepted for a reference implementation): the rename itself is not write-through, so
+		// a power cut immediately after can lose the NEWEST version of a record — never a torn one, since
+		// the data is flushed to disk before the swap. Truly robust would be Win32
+		// MoveFileEx(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) (and a directory fsync on POSIX),
+		// at the cost of platform-specific interop; a database-backed store gets this from its WAL for free.
 		if (File.Exists(path))
 		{
 			File.Replace(tempPath, path, destinationBackupFileName: null);
@@ -307,10 +321,15 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 		{
 			await writer.WriteAsync(contents).ConfigureAwait(false);
 			await writer.FlushAsync().ConfigureAwait(false);
+			// Force the data to the platter, not just the OS cache: NTFS journals the RENAME metadata but
+			// not file data, so without this a power cut can leave the rename durable while the content is
+			// empty/torn — the silent-skip failure mode recovery can least afford. Sync-only by necessity
+			// (there is no FlushAsync(flushToDisk) overload); costs ~ms per write.
+			stream.Flush(flushToDisk: true);
 		}
 	}
 
-	private static async Task<string> ReadFileAsync(string path)
+	private static async Task<string> DefaultReadFileAsync(string path)
 	{
 		using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true))
 		using (var reader = new StreamReader(stream))
