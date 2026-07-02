@@ -32,6 +32,11 @@ namespace Yort.Eftpos.SmartConnect;
 /// good predictor, not a guarantee. Records larger than the reservation grow the file and succeed.</para>
 /// <para>Transient IO failures (sharing/lock violations) are retried a small bounded number of times so a
 /// thrown exception means "store actually unavailable", not "one anti-virus scan blip".</para>
+/// <para>Each record is one file named from the client transaction reference. On a case-insensitive
+/// filesystem (Windows, and macOS by default) two references that differ ONLY in letter case map to the
+/// same file, so one would silently overwrite the other's sentinel — a recovery hazard. Use references
+/// that are unique without relying on case (GUIDs and docket ids already are); a database-backed store
+/// with a case-sensitive key column avoids the constraint entirely.</para>
 /// </remarks>
 public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionState
 {
@@ -238,7 +243,9 @@ public sealed class FileBasedTransactionStateStore : ISmartConnectTransactionSta
 			(attempt, ex) => SafeLog(LogLevel.Warning, ex, "Transient IO failure on transaction-state operation (attempt {Attempt} of {MaxAttempts}); retrying.", attempt, TransientFileRetry.DefaultAttempts));
 	}
 
-	// Escape so refs containing path-hostile characters (e.g. "branch/01-...") map to a safe, reversible file name.
+	// Escape so refs containing path-hostile characters (e.g. "branch/01-...") map to a safe, reversible file
+	// name. EscapeDataString preserves letter case, so refs differing only in case collide on a
+	// case-insensitive filesystem — a documented caller constraint (see the class remarks), not handled here.
 	private string PathFor(string clientTransactionRef)
 		=> Path.Combine(_directory, Uri.EscapeDataString(clientTransactionRef) + ".json");
 
