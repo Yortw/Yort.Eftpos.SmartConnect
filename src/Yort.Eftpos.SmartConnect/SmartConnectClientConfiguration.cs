@@ -58,12 +58,21 @@ public sealed class SmartConnectClientConfiguration
 
 	/// <summary>Validates the configuration, throwing if a required value is missing or out of range.</summary>
 	/// <exception cref="ArgumentNullException"><see cref="BaseUrl"/> or <see cref="StateStore"/> is null.</exception>
+	/// <exception cref="ArgumentException"><see cref="BaseUrl"/> is a relative URI (an absolute URI is required to compose request URLs).</exception>
 	/// <exception cref="ArgumentOutOfRangeException"><see cref="PollInterval"/> is below <see cref="MinimumPollInterval"/>, <see cref="MaxPollDuration"/> is not at least <see cref="PollInterval"/>, or <see cref="BackoffCap"/> is below <see cref="PollInterval"/>.</exception>
 	public void Validate()
 	{
 		if (BaseUrl == null)
 		{
 			throw new ArgumentNullException(nameof(BaseUrl), "BaseUrl is required; use a SmartConnectEnvironments value.");
+		}
+
+		// A relative BaseUrl passes the null check but the client reads BaseUrl.AbsoluteUri at construction,
+		// which throws an undocumented InvalidOperationException for a relative URI. Reject it here so the
+		// failure names BaseUrl as the culprit and stays within the documented exception contract.
+		if (!BaseUrl.IsAbsoluteUri)
+		{
+			throw new ArgumentException("BaseUrl must be an absolute URI (e.g. https://…); use a SmartConnectEnvironments value.", nameof(BaseUrl));
 		}
 
 		if (StateStore == null)

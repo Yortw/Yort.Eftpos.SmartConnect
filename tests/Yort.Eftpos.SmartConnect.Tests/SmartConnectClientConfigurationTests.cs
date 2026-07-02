@@ -34,6 +34,27 @@ public class SmartConnectClientConfigurationTests
 		Assert.Throws<ArgumentNullException>(() => config.Validate());
 	}
 
+	// A relative BaseUrl (e.g. from `new Uri(configValue, UriKind.RelativeOrAbsolute)` on a malformed
+	// string) passed the null check, then the client ctor's `BaseUrl.AbsoluteUri` threw an UNDOCUMENTED
+	// InvalidOperationException with no hint BaseUrl was the culprit. Validate must reject it up front, as
+	// the documented ArgumentException, so the diagnosis points at the offending value.
+	[Fact]
+	public void Validate_RelativeBaseUrl_ThrowsArgumentException()
+	{
+		var config = ValidConfig();
+		config.BaseUrl = new Uri("/pos", UriKind.Relative);
+		var ex = Assert.Throws<ArgumentException>(() => config.Validate());
+		Assert.Equal(nameof(SmartConnectClientConfiguration.BaseUrl), ex.ParamName);
+	}
+
+	[Fact]
+	public void Validate_AbsoluteBaseUrl_DoesNotThrow()
+	{
+		var config = ValidConfig();
+		config.BaseUrl = new Uri("https://example.test/pos", UriKind.RelativeOrAbsolute);
+		Assert.Null(Record.Exception(() => config.Validate()));
+	}
+
 	[Fact]
 	public void Validate_PollIntervalBelowMinimum_Throws()
 	{
