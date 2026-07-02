@@ -27,7 +27,8 @@ public sealed class SmartConnectReceiptDialog : IDisposable
 	public SmartConnectReceiptDialog(IWin32Window? owner)
 	{
 		_form = new ReceiptForm();
-		_owner = new OwnerController(owner, _chrome.DisableOwnerWhileBusy, NativeMethods.SetWindowEnabled);
+		// Delegate, not value: DisableOwnerWhileBusy is settable post-construction (see progress dialog).
+		_owner = new OwnerController(owner, () => _chrome.DisableOwnerWhileBusy, NativeMethods.SetWindowEnabled);
 	}
 
 	/// <summary>The window title (default "Receipt").</summary>

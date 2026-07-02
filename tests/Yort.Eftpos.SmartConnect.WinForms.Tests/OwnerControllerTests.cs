@@ -29,7 +29,7 @@ public class OwnerControllerTests
 	{
 		var calls = new List<(IntPtr handle, bool enabled)>();
 		var owner = new DisposableFakeWindow();
-		var controller = new OwnerController(owner, disableWhileBusy: true, (h, e) => calls.Add((h, e)));
+		var controller = new OwnerController(owner, disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
 
 		controller.Disable();   // owner alive: disable recorded against handle 42
 		owner.Disposed = true;  // owner torn down while the dialog was still busy
@@ -49,7 +49,7 @@ public class OwnerControllerTests
 	public void Disable_NullOwner_DoesNothingAndDoesNotThrow()
 	{
 		var calls = new List<(IntPtr handle, bool enabled)>();
-		var controller = new OwnerController(owner: null, disableWhileBusy: true, (h, e) => calls.Add((h, e)));
+		var controller = new OwnerController(owner: null, disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
 
 		controller.Disable();
 		controller.Restore();
@@ -61,7 +61,7 @@ public class OwnerControllerTests
 	public void Disable_WhenEnabled_DisablesThenRestoreReenables()
 	{
 		var calls = new List<(IntPtr handle, bool enabled)>();
-		var controller = new OwnerController(new FakeWindow(), disableWhileBusy: true, (h, e) => calls.Add((h, e)));
+		var controller = new OwnerController(new FakeWindow(), disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
 
 		controller.Disable();
 		controller.Restore();
@@ -75,7 +75,7 @@ public class OwnerControllerTests
 	public void Disable_WhenDisableWhileBusyFalse_NeverTouchesOwner()
 	{
 		var calls = new List<(IntPtr handle, bool enabled)>();
-		var controller = new OwnerController(new FakeWindow(), disableWhileBusy: false, (h, e) => calls.Add((h, e)));
+		var controller = new OwnerController(new FakeWindow(), disableWhileBusy: () => false, (h, e) => calls.Add((h, e)));
 
 		controller.Disable();
 		controller.Restore();
@@ -87,9 +87,43 @@ public class OwnerControllerTests
 	public void Restore_WithoutDisable_DoesNothing()
 	{
 		var calls = new List<(IntPtr handle, bool enabled)>();
-		var controller = new OwnerController(new FakeWindow(), disableWhileBusy: true, (h, e) => calls.Add((h, e)));
+		var controller = new OwnerController(new FakeWindow(), disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
 
 		controller.Restore();
+
+		Assert.Empty(calls);
+	}
+
+	[Fact]
+	public void Disable_ReadsDisableWhileBusyAtCallTime_NotConstructionTime()
+	{
+		// The public DisableOwnerWhileBusy property is settable AFTER the dialog constructs this
+		// controller — a value captured at construction makes that setter silently dead (the getter
+		// reports false while the owner still gets disabled).
+		var calls = new List<(IntPtr handle, bool enabled)>();
+		var disableWhileBusy = true;
+		var controller = new OwnerController(new FakeWindow(), () => disableWhileBusy, (h, e) => calls.Add((h, e)));
+
+		disableWhileBusy = false; // consumer sets dialog.DisableOwnerWhileBusy = false post-construction
+		controller.Disable();
+		controller.Restore();
+
+		Assert.Empty(calls);
+	}
+
+	[Fact]
+	public void Disable_OwnerAlreadyDisposed_DoesNotThrowAndDoesNotMarkDisabled()
+	{
+		// The owner can be disposed BEFORE the first show (operator closes the till window just as a
+		// transaction starts). Disable() runs inside a Progress<T>-posted callback there, so an escaping
+		// ObjectDisposedException is an unhandled UI-thread exception mid-transaction. Restore() was
+		// already hardened for this; Disable() gets hit first.
+		var calls = new List<(IntPtr handle, bool enabled)>();
+		var owner = new DisposableFakeWindow { Disposed = true };
+		var controller = new OwnerController(owner, disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
+
+		controller.Disable();  // must not throw
+		controller.Restore();  // nothing was disabled, so nothing to re-enable
 
 		Assert.Empty(calls);
 	}

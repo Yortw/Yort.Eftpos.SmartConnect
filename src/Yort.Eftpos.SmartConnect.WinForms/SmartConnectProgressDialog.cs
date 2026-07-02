@@ -36,7 +36,9 @@ public sealed class SmartConnectProgressDialog : IDisposable
 	public SmartConnectProgressDialog(IWin32Window? owner)
 	{
 		_form = new ProgressForm();
-		_owner = new OwnerController(owner, _chrome.DisableOwnerWhileBusy, NativeMethods.SetWindowEnabled);
+		// The flag is passed as a delegate, not a value: DisableOwnerWhileBusy is a settable property, so
+		// it must be read when the disable happens, or setting it after construction is silently ignored.
+		_owner = new OwnerController(owner, () => _chrome.DisableOwnerWhileBusy, NativeMethods.SetWindowEnabled);
 		_controller = new ProgressController(_form, (IReadOnlyDictionary<SmartConnectPollingState, string>)_stateCaptions, OnFirstShow);
 		_progress = new Progress<SmartConnectPollingStatus>(_controller.Report);
 		TransactionResultCaptions = DefaultCaptions.CreateTransactionResultCaptions();
@@ -137,7 +139,11 @@ public sealed class SmartConnectProgressDialog : IDisposable
 
 	private void EnsureAppearanceAndOwner()
 	{
-		if (_appearanceApplied)
+		// Progress reports arrive via Progress<T>-posted callbacks, so one queued behind Dispose() runs
+		// AFTER it. Without this guard a first-report-after-dispose would disable the owner after
+		// Dispose already ran its Restore() — leaving the owner window disabled with nothing left to
+		// re-enable it.
+		if (_appearanceApplied || _form.IsDisposed)
 		{
 			return;
 		}

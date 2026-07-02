@@ -70,6 +70,13 @@ internal sealed class ProgressForm : Form, IProgressView
 	/// <summary>Shows the busy state with the given caption. Auto-shows the form on first call.</summary>
 	public void ShowBusy(string caption)
 	{
+		if (IsDisposed)
+		{
+			// F7-adjacent: a Progress<T>-posted report can run after Dispose (host shutdown / early
+			// using-scope exit) — Show() on a disposed form would throw inside the posted callback.
+			return;
+		}
+
 		_resultPanel.Visible = false;
 		_logo.Visible = _logo.Image != null;
 		_caption.Visible = true;
@@ -87,6 +94,11 @@ internal sealed class ProgressForm : Form, IProgressView
 	/// <summary>Updates the caption text while the busy state is already showing.</summary>
 	public void UpdateCaption(string caption)
 	{
+		if (IsDisposed)
+		{
+			return;
+		}
+
 		_caption.Text = caption;
 	}
 

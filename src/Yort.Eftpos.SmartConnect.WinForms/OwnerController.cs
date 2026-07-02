@@ -9,22 +9,25 @@ namespace Yort.Eftpos.SmartConnect.WinForms;
 internal sealed class OwnerController
 {
 	private readonly IWin32Window? _owner;
-	private readonly bool _disableWhileBusy;
+	private readonly Func<bool> _disableWhileBusy;
 	private readonly Action<IntPtr, bool> _setWindowEnabled;
 	private bool _disabled;
 
 	/// <summary>Creates a controller for the given owner.</summary>
 	/// <param name="owner">The owner window, or null when there is none.</param>
-	/// <param name="disableWhileBusy">Whether to disable the owner while busy.</param>
+	/// <param name="disableWhileBusy">Whether to disable the owner while busy — a delegate, not a captured
+	/// value, because the dialogs expose this as a settable property: it must be read when the disable
+	/// actually happens, or setting it after construction is silently ignored.</param>
 	/// <param name="setWindowEnabled">Action that enables/disables a window by handle.</param>
-	public OwnerController(IWin32Window? owner, bool disableWhileBusy, Action<IntPtr, bool> setWindowEnabled)
+	public OwnerController(IWin32Window? owner, Func<bool> disableWhileBusy, Action<IntPtr, bool> setWindowEnabled)
 	{
 		_owner = owner;
 		_disableWhileBusy = disableWhileBusy;
 		_setWindowEnabled = setWindowEnabled;
 	}
 
-	/// <summary>Disables the owner if there is one and disabling is enabled. Idempotent.</summary>
+	/// <summary>Disables the owner if there is one and disabling is enabled. Idempotent, and safe to call
+	/// after the owner window has been disposed (owner closed just as a transaction starts).</summary>
 	public void Disable()
 	{
 		if (_disabled)
@@ -32,10 +35,20 @@ internal sealed class OwnerController
 			return;
 		}
 
-		if (_owner != null && _disableWhileBusy)
+		if (_owner != null && _disableWhileBusy())
 		{
-			_setWindowEnabled(_owner.Handle, false);
-			_disabled = true;
+			try
+			{
+				_setWindowEnabled(_owner.Handle, false);
+				_disabled = true;
+			}
+			catch (ObjectDisposedException)
+			{
+				// The owner was disposed before the dialog's first show; Handle on a disposed control
+				// throws. Disable() runs inside a Progress<T>-posted callback, so letting this escape is
+				// an unhandled UI-thread exception mid-transaction. Nothing was disabled (_disabled stays
+				// false), so a later Restore() correctly no-ops. Restore() has the matching guard.
+			}
 		}
 	}
 
