@@ -21,7 +21,9 @@ internal sealed class PairingForm : Form, IPairingView
 	private readonly Button _cancel2;
 	private readonly Button _ok;
 	private readonly Font _baseFont;
-	private readonly Font _messageFont;
+	// Not readonly: rebuilt from the dialog font in OnFontChanged so a caller-supplied Font reaches the
+	// emphasised success/failure message, not just the inherited prompt/button labels.
+	private Font _messageFont;
 
 	private TaskCompletionSource<string?>? _codeResult;
 	private TaskCompletionSource<bool>? _failureResult;
@@ -233,6 +235,25 @@ internal sealed class PairingForm : Form, IPairingView
 		_ok.Top = buttonsTop;
 
 		ClientSize = new Size(ClientSize.Width, buttonsTop + _retry.Height + ContentTopNoLogo);
+	}
+
+	/// <inheritdoc/>
+	protected override void OnFontChanged(EventArgs e)
+	{
+		base.OnFontChanged(e);
+
+		// Rebuild the emphasised message font from the (possibly caller-supplied) dialog font so a custom
+		// Font reaches it too. Guard the construction-time Font assignment, which fires before these fields
+		// exist. The inherited prompt/code/button controls follow the dialog font automatically.
+		if (_message == null)
+		{
+			return;
+		}
+
+		var previous = _messageFont;
+		_messageFont = new Font(Font.FontFamily, Font.SizeInPoints + 2f, FontStyle.Bold);
+		_message.Font = _messageFont;
+		previous?.Dispose();
 	}
 
 	protected override void OnLoad(EventArgs e)

@@ -9,6 +9,9 @@ namespace Yort.Eftpos.SmartConnect.WinForms;
 /// the pairing attempt via a caller-supplied callback, presents the result, and lets the operator retry
 /// a bad code or cancel. Construct it on the UI thread. The dialog depends on no client type — only on
 /// the callback that turns an entered code into a <see cref="SmartConnectPairingResult"/>.</summary>
+/// <remarks>Use one instance per pairing attempt and dispose it (a <c>using</c>). An instance is not
+/// designed to be reused for a second <see cref="ShowAsync"/> — the appearance/owner setup runs once, so a
+/// reused instance would not re-disable the owner. Construct a new dialog each time.</remarks>
 public sealed class SmartConnectPairingDialog : IDisposable
 {
 	private readonly PairingForm _form;

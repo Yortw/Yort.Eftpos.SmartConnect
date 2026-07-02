@@ -18,7 +18,9 @@ internal sealed class ProgressForm : Form, IProgressView
 	private readonly Label _resultDetail;
 	private readonly Button _ok;
 	private readonly Font _baseFont;
-	private readonly Font _resultCaptionFont;
+	// Not readonly: rebuilt from the dialog font in OnFontChanged so a caller-supplied Font reaches the
+	// emphasised headline, not just the inherited body labels.
+	private Font _resultCaptionFont;
 	private System.Windows.Forms.Timer? _autoClose;
 	private TaskCompletionSource<bool>? _resultAck;
 
@@ -129,6 +131,7 @@ internal sealed class ProgressForm : Form, IProgressView
 		_resultCaption.Text = visual.Caption;
 		_resultCaption.ForeColor = SeverityColour(visual.Severity);
 		_resultDetail.Text = visual.Detail ?? string.Empty;
+		LayoutResultPanel();
 		_resultPanel.Visible = true;
 		_resultPanel.BringToFront();
 		_ok.Focus();
@@ -147,6 +150,56 @@ internal sealed class ProgressForm : Form, IProgressView
 		}
 
 		return _resultAck.Task;
+	}
+
+	/// <summary>Sizes the outcome detail to its wrapped text and places OK below it, growing the form to
+	/// fit. The detail carries the service's <c>ErrorMessage</c> on failures — arbitrary-length, partly
+	/// caller-influenced — so a fixed-height label clips it (the same defect PairingForm.LayoutMessage
+	/// fixes). Measurement and the margins are in device pixels (MeasureText and LogicalToDeviceUnits both
+	/// track the current DPI), so this stays correct at any scaling.</summary>
+	private void LayoutResultPanel()
+	{
+		var detailTop = _resultCaption.Bottom + LogicalToDeviceUnits(4);
+		int okTop;
+		if (string.IsNullOrEmpty(_resultDetail.Text))
+		{
+			_resultDetail.Bounds = new Rectangle(_resultCaption.Left, detailTop, _resultCaption.Width, 0);
+			okTop = detailTop + LogicalToDeviceUnits(8);
+		}
+		else
+		{
+			// Measure a few px narrower than the label so the rendered text can never need more lines than
+			// were measured (which would clip the last line); WordBreak matches the label's own wrapping.
+			var needed = TextRenderer.MeasureText(
+				_resultDetail.Text,
+				_resultDetail.Font,
+				new Size(_resultCaption.Width - LogicalToDeviceUnits(6), int.MaxValue),
+				TextFormatFlags.WordBreak);
+			_resultDetail.Bounds = new Rectangle(_resultCaption.Left, detailTop, _resultCaption.Width, needed.Height + LogicalToDeviceUnits(6));
+			okTop = _resultDetail.Bottom + LogicalToDeviceUnits(16);
+		}
+
+		_ok.Location = new Point((ClientSize.Width - _ok.Width) / 2, okTop);
+		ClientSize = new Size(ClientSize.Width, _ok.Bottom + LogicalToDeviceUnits(12));
+	}
+
+	/// <inheritdoc/>
+	protected override void OnFontChanged(EventArgs e)
+	{
+		base.OnFontChanged(e);
+
+		// Rebuild the emphasised headline font from the (possibly caller-supplied) dialog font so a custom
+		// Font reaches it too. Guard the construction-time Font assignment, which fires before these fields
+		// exist. The inherited body labels (caption, detail, OK) follow the dialog font automatically.
+		if (_resultCaption == null)
+		{
+			return;
+		}
+
+		var previous = _resultCaptionFont;
+		_resultCaptionFont = new Font(Font.FontFamily, Font.SizeInPoints + 4f, FontStyle.Bold);
+		_resultCaption.Font = _resultCaptionFont;
+		previous?.Dispose();
 	}
 
 	/// <summary>Completes the current result acknowledgement and stops/disposes the auto-close timer.

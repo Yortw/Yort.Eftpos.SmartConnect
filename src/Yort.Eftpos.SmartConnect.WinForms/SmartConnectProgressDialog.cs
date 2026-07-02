@@ -12,10 +12,16 @@ namespace Yort.Eftpos.SmartConnect.WinForms;
 /// <see cref="Progress"/> into a client call; the dialog auto-shows on the first report and closes on
 /// <see cref="Dispose"/>. Call a <c>ShowResultAsync</c> overload to present the outcome, or omit it to
 /// suppress the outcome screen.</summary>
-/// <remarks>A <c>ShowResultAsync</c> call returns when the operator acknowledges the outcome (or, for the
+/// <remarks>
+/// <para>A <c>ShowResultAsync</c> call returns when the operator acknowledges the outcome (or, for the
 /// timeout overloads, when the delay elapses); the dialog <em>window</em> is dismissed on <see cref="Dispose"/>
 /// — the usual pattern is a <c>using</c> around the call. Calling <c>ShowResultAsync</c> again before a prior
-/// call has returned pre-empts the earlier call: its awaiter completes without operator acknowledgement.</remarks>
+/// call has returned pre-empts the earlier call: its awaiter completes without operator acknowledgement.</para>
+/// <para>Use one instance per operation and dispose it (a <c>using</c> per transaction). An instance is not
+/// designed to be reused for a second operation — it shows its outcome once and disables the owner once, so
+/// a reused instance would display the previous outcome and skip re-disabling the owner. Construct a new
+/// dialog for each transaction.</para>
+/// </remarks>
 public sealed class SmartConnectProgressDialog : IDisposable
 {
 	private readonly ProgressForm _form;

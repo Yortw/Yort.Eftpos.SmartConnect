@@ -10,6 +10,9 @@ namespace Yort.Eftpos.SmartConnect.WinForms;
 /// Construct it on the UI thread. It is a passive viewer: the caller decides <em>when</em> to show a
 /// receipt (e.g. after an acquirer logon or settlement inquiry returns one) and passes the text to
 /// <see cref="ShowAsync"/>.</summary>
+/// <remarks>Use one instance per receipt and dispose it (a <c>using</c>). An instance is not designed to be
+/// reused for a second <see cref="ShowAsync"/> — the appearance/owner setup runs once, so a reused instance
+/// would not re-disable the owner. Construct a new dialog each time.</remarks>
 public sealed class SmartConnectReceiptDialog : IDisposable
 {
 	private readonly ReceiptForm _form;
