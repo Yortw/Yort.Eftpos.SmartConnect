@@ -79,8 +79,8 @@ switch (result.Status)
 		// Normal outcomes — show the operator, move on.
 		break;
 	case SmartConnectTransactionStatus.Unknown:
-		// MANDATORY handling: outcome ambiguous (timeout, lost response). Reconcile before retrying —
-		// result.FailureCause distinguishes "never sent" (safe retry) from "may have been processed".
+		// MANDATORY handling: outcome ambiguous (timeout, lost response, gateway 5xx). Reconcile before
+		// retrying — result.FailureCause distinguishes "never sent" (safe retry) from "may have been processed".
 		break;
 	case SmartConnectTransactionStatus.Failed:
 		// result.FailureCause: ServiceError (fix request/config), TransportNotSent (safe to retry),

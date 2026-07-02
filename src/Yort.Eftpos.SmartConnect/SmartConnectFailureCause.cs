@@ -9,7 +9,7 @@ public enum SmartConnectFailureCause
 	/// <summary>No failure-cause detail — the transaction has a normal outcome (including Declined).</summary>
 	None = 0,
 
-	/// <summary>SmartConnect answered and rejected the request (e.g. HTTP 400). Fix the request/configuration; blind retry will fail again.</summary>
+	/// <summary>SmartConnect answered with a 4xx verdict that the request was not processed (e.g. HTTP 400). Fix the request/configuration; blind retry will fail again. A 5xx/408 answer is NOT this — it maps to <see cref="TransportUnknown"/>, because an intermediary can generate it after the service received the request.</summary>
 	ServiceError = 1,
 
 	/// <summary>
@@ -19,8 +19,10 @@ public enum SmartConnectFailureCause
 	TransportNotSent = 2,
 
 	/// <summary>
-	/// The exchange failed (or the response was unusable) after the POST may have reached SmartConnect — the
-	/// outcome is unknown and the transaction may have been processed. Never blind-retry; use the recovery flow.
+	/// The POST may have reached SmartConnect but no trustworthy verdict came back: the exchange failed, the
+	/// response was unusable, or the answer was a 5xx/408 an intermediary can generate after the service
+	/// received the request. The outcome is unknown and the transaction may have been processed. Never
+	/// blind-retry; use the recovery flow.
 	/// </summary>
 	TransportUnknown = 3,
 

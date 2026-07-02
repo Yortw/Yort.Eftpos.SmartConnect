@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Xunit;
 using Yort.Eftpos.SmartConnect.Tests.Helpers;
 
@@ -200,6 +201,58 @@ public class SmartConnectClientTransactionTests
 		Assert.NotEqual(SmartConnectFailureCause.TransportNotSent, result.FailureCause);
 		// The service refused it — terminal; the sentinel closes as Failed.
 		Assert.Equal(SmartConnectTransactionStatus.Failed, store.Records[Ref].Status);
+	}
+
+	[Theory]
+	[InlineData(HttpStatusCode.Unauthorized)]
+	[InlineData(HttpStatusCode.Forbidden)]
+	[InlineData(HttpStatusCode.NotFound)]
+	[InlineData(HttpStatusCode.TooManyRequests)]
+	public async Task Process_Http4xx_ReturnsFailedServiceError_SentinelClosed(HttpStatusCode status)
+	{
+		// The 4xx bucket is a genuine verdict that the request was NOT processed (429 included:
+		// rate-limited means refused wherever it was generated) — terminal Failed, sentinel closed.
+		var store = new InMemoryTransactionStateStore();
+		var handler = new MockHttpHandler(_ => Task.FromResult(new HttpResponseMessage(status)));
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler, store)));
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Failed, result.Status);
+		Assert.Equal(SmartConnectFailureCause.ServiceError, result.FailureCause);
+		Assert.Equal(SmartConnectTransactionStatus.Failed, store.Records[Ref].Status);
+	}
+
+	[Theory]
+	[InlineData(HttpStatusCode.InternalServerError)]
+	[InlineData(HttpStatusCode.BadGateway)]
+	[InlineData(HttpStatusCode.ServiceUnavailable)]
+	[InlineData(HttpStatusCode.GatewayTimeout)]
+	[InlineData(HttpStatusCode.RequestTimeout)]
+	public async Task Process_Http5xxOr408_ReturnsUnknownTransportUnknown_SentinelPending(HttpStatusCode status)
+	{
+		// (Decision 9, 2026-07-02 update) 5xx/408 on the initial POST is routinely intermediary-generated
+		// (LB/WAF/proxy) AFTER the origin received the request — epistemically the same state as a transport
+		// timeout, which maps to Unknown. Labelling it Failed/ServiceError ("blind retry will fail again")
+		// invites a re-tender over a possibly-live charge.
+		var store = new InMemoryTransactionStateStore();
+		var handler = new MockHttpHandler(_ => Task.FromResult(new HttpResponseMessage(status)));
+		var logger = new ListLogger();
+		var configuration = CreateConfiguration(handler, store);
+		configuration.Logger = logger;
+		using var client = WithVirtualTime(new SmartConnectClient(configuration));
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+		Assert.Equal(SmartConnectFailureCause.TransportUnknown, result.FailureCause);
+		// The requirement, not the mechanism: this must never present as a terminal failure...
+		Assert.NotEqual(SmartConnectTransactionStatus.Failed, result.Status);
+		// ...and the sentinel must stay PENDING (null status) so the sale remains visible for
+		// manual reconciliation — closing it would hide a possibly-live charge.
+		Assert.Null(store.Records[Ref].Status);
+		// Diagnosability: an ambiguous outcome is always logged as an Error with the ref.
+		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains(Ref));
 	}
 
 	[Fact]
