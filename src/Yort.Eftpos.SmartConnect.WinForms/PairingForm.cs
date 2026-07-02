@@ -232,8 +232,19 @@ internal sealed class PairingForm : Form, IPairingView
 		// construction is correct as-is and needs no adjustment).
 		if (_logo.Visible)
 		{
+			var heightBefore = Height;
 			LayoutContent(ContentTopWithLogo);
-			CenterToScreen();
+			if (StartPosition == FormStartPosition.CenterScreen)
+			{
+				CenterToScreen();
+			}
+			else
+			{
+				// Owner-centred (Manual, set by OwnerPlacement in a Load handler that ran before this
+				// override's tail) — keep the midpoint fixed as the form grows; CenterToScreen would
+				// throw away the owner-relative position.
+				Top -= (Height - heightBefore) / 2;
+			}
 		}
 	}
 

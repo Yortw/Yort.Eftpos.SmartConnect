@@ -29,6 +29,8 @@ public sealed class SmartConnectPairingDialog : IDisposable
 		_form = new PairingForm();
 		// Delegate, not value: DisableOwnerWhileBusy is settable post-construction (see progress dialog).
 		_owner = new OwnerController(owner, () => _chrome.DisableOwnerWhileBusy, NativeMethods.SetWindowEnabled);
+		// Owner-centring at Load (first show), when the form's size is final (see progress dialog).
+		_form.Load += (_, _) => OwnerPlacement.TryApply(_form, owner);
 	}
 
 	/// <summary>The window title (default "Pair Terminal").</summary>

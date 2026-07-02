@@ -39,6 +39,9 @@ public sealed class SmartConnectProgressDialog : IDisposable
 		// The flag is passed as a delegate, not a value: DisableOwnerWhileBusy is a settable property, so
 		// it must be read when the disable happens, or setting it after construction is silently ignored.
 		_owner = new OwnerController(owner, () => _chrome.DisableOwnerWhileBusy, NativeMethods.SetWindowEnabled);
+		// Owner-centring at Load (first show): that is when the form's size is final. No usable owner →
+		// the form's CenterScreen default stands.
+		_form.Load += (_, _) => OwnerPlacement.TryApply(_form, owner);
 		_controller = new ProgressController(_form, (IReadOnlyDictionary<SmartConnectPollingState, string>)_stateCaptions, OnFirstShow);
 		_progress = new Progress<SmartConnectPollingStatus>(_controller.Report);
 		TransactionResultCaptions = DefaultCaptions.CreateTransactionResultCaptions();
