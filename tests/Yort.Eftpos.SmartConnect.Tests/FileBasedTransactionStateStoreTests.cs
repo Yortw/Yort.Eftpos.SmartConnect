@@ -431,4 +431,47 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
 		Assert.Single(await store.GetPendingTransactionsAsync());
 	}
+
+	// The update/complete/remove path reads the existing record via ReadRequiredAsync, which maps a corrupt
+	// file to a NON-retryable InvalidOperationException. Corruption coverage previously existed only for
+	// GetPending (skip) and Save (overwrite-reset) — not this read-modify-write path.
+	[Fact]
+	public async Task UpdatePollingDetails_OverCorruptRecord_ThrowsInvalidOperation()
+	{
+		var store = NewStore();
+		File.WriteAllText(FileFor("ref-1"), "{ corrupt, not valid json");
+
+		await Assert.ThrowsAsync<InvalidOperationException>(
+			() => store.UpdatePollingDetailsAsync("ref-1", "https://poll?merchantAccessToken=t", "txn-1"));
+	}
+
+	[Fact]
+	public async Task UpdateCompleted_OverCorruptRecord_ThrowsInvalidOperation()
+	{
+		var store = NewStore();
+		File.WriteAllText(FileFor("ref-1"), "{ corrupt, not valid json");
+
+		await Assert.ThrowsAsync<InvalidOperationException>(
+			() => store.UpdateCompletedAsync("ref-1", SmartConnectTransactionStatus.Accepted));
+	}
+
+	// Exercises the single _sync semaphore under real contention: interleaved writers (distinct refs) and
+	// readers must serialise without losing a write or leaking the semaphore. A leaked semaphore deadlocks
+	// every later call, so the wait is bounded — a regression fails in 10s rather than hanging the suite.
+	[Fact]
+	public async Task ConcurrentOperations_AreSerialisedWithoutLossOrDeadlock()
+	{
+		var store = NewStore();
+		const int count = 40;
+		var writes = Enumerable.Range(0, count).Select(i =>
+			store.SaveTransactionAttemptAsync("ref-" + i, SmartConnectTransactionType.CardPurchase, 100 + i));
+		var reads = Enumerable.Range(0, count).Select(_ => (Task)store.GetPendingTransactionsAsync());
+		var all = Task.WhenAll(writes.Concat(reads).ToArray());
+
+		var finished = await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(10)));
+		Assert.Same(all, finished); // completed, not the deadlock guard
+		await all;                  // observe any faulted operation
+
+		Assert.Equal(count, (await store.GetPendingTransactionsAsync()).Count());
+	}
 }

@@ -171,13 +171,18 @@ public class SmartConnectClientStateLifecycleTests
 	{
 		var store = new InMemoryTransactionStateStore { ThrowOnUpdatePollingDetails = new InvalidOperationException("db restarting") };
 		var logger = new ListLogger();
-		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(PendingResponseHandler(), store, logger)));
+		var handler = PendingResponseHandler();
+		using var client = WithVirtualTime(new SmartConnectClient(CreateConfiguration(handler, store, logger)));
 
 		// The transaction is irrevocably in flight — the most likely outcome is a normal accept/decline,
 		// so the library must continue on the in-memory URL, not abort.
 		var result = await client.ProcessTransactionAsync(CreateRequest());
 
-		Assert.NotNull(result);
+		// Pin "continues", not just "returned something": at least one poll GET must have followed the POST
+		// (a regression that aborted right after the failed persist would leave RequestCount at 1), and the
+		// always-PENDING handler drives it to the poll-exhaustion Unknown rather than an early failure.
+		Assert.True(handler.RequestCount > 1, $"Expected polling to continue after the persist failure; RequestCount was {handler.RequestCount}.");
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
 		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
 	}
 

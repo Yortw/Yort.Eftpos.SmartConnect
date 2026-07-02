@@ -68,6 +68,28 @@ public class SmartConnectClientPairingTests
 	}
 
 	[Fact]
+	public async Task PairAsync_MakesNoStateStoreCalls()
+	{
+		// Pairing is not a transaction — it writes no crash-recovery sentinel. The other tests use a
+		// silent NSubstitute store that would hide an accidental store touch; pin the invariant with a
+		// recording store (its throw-hooks armed too, so a call would also fail loudly, not just log).
+		var store = new InMemoryTransactionStateStore
+		{
+			ThrowOnSave = new InvalidOperationException("PairAsync must not write a sentinel"),
+			ThrowOnUpdatePollingDetails = new InvalidOperationException("PairAsync must not touch the store"),
+			ThrowOnUpdateCompleted = new InvalidOperationException("PairAsync must not touch the store")
+		};
+		var configuration = CreateConfiguration(SuccessHandler());
+		configuration.StateStore = store;
+		using var client = new SmartConnectClient(configuration);
+
+		var result = await client.PairAsync("12345678", CreatePairingRequest());
+
+		Assert.True(result.Success);
+		Assert.Empty(store.CallLog);
+	}
+
+	[Fact]
 	public async Task PairAsync_SendsFormEncodedPutToPairingUrl()
 	{
 		var handler = SuccessHandler();
