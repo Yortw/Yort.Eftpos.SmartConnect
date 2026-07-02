@@ -45,7 +45,7 @@ public static class SmartConnectTransactionType
 	/// <summary>Reprint the last receipt.</summary>
 	public const string JournalReprintReceipt = "Journal.ReprintReceipt";
 
-	/// <summary>Retrieve the result of a prior transaction. Deprecated by the vendor for async mode; used only as a crash-recovery fallback.</summary>
+	/// <summary>Retrieve the result of the terminal's last transaction. Deprecated by the vendor for async mode; a diagnostic only — device-scoped, and its result cannot be reliably matched to a specific sale.</summary>
 	public const string JournalGetTransResult = "Journal.GetTransResult";
 
 	/// <summary>Query terminal status.</summary>

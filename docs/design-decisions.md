@@ -166,15 +166,17 @@ Ship the integration with the strongest protection the API allows, and document 
 prominently rather than pretending it is closed:
 
 - **Sentinel written before every POST**, with an absolute pre-POST gate (Decision 10).
-- **Persisted polling URL** resumed on restart (Layer 1 recovery).
-- **`Journal.GetTransResult`** best-effort last-transaction fetch (Layer 2 recovery, Decision 10).
+- **Persisted polling URL** resumed on restart — the only programmatic recovery mechanism.
+- **`Journal.GetTransResult`** last-transaction fetch — originally framed as "Layer 2 recovery", since
+  **rescoped to a diagnostic only** (see Decision 10's 2026-07-02 update).
 
 ### Trade-offs Accepted
 
-- A real window remains where, if the POST succeeds but the URL is never persisted and Layer 2 cannot
-  correlate, the outcome is unknown. The library surfaces this honestly as `Unknown` / transport
-  `Delivery = Unknown`; it does not guess. Adopters must be made aware of the residual risk. If an
-  idempotency-key mechanism ever ships, it slots into the Layer-2 seam without rearchitecting.
+- A real window remains where, if the POST succeeds but the URL is never persisted, the outcome is
+  unknown and cannot be resolved programmatically. The library surfaces this honestly as `Unknown` /
+  transport `Delivery = Unknown`; it does not guess — resolution is manual reconciliation. Adopters must
+  be made aware of the residual risk. If an idempotency-key mechanism ever ships, it slots in without
+  rearchitecting.
 
 ---
 
@@ -304,7 +306,8 @@ verification.
 3. **Store implementations should briefly retry known-transient errors** (sharing/lock violations,
    DB deadlock/timeout) before throwing, so a gate refusal means "store actually unavailable", not "one
    blip". Bounded so tender start is not visibly delayed.
-4. **Layer-2 recovery is documented as best-effort, not a safety net.**
+4. **Layer-2 recovery is documented as best-effort, not a safety net.** *(Superseded — see the
+   2026-07-02 update below: the journal is a diagnostic, not a recovery layer of any strength.)*
 
 ### Rationale
 
@@ -366,6 +369,27 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
   does echo — the live result — Layer-1 recovery already holds the transaction-specific polling URL and needs
   no extra key.) Net: the journal narrows the gap in the common single-register case but cannot be made
   reliable; it is best-effort, never a safety net.
+
+### Update (2026-07-02) — the journal is a diagnostic, not a recovery layer
+
+Re-examined during integration testing, the "Layer 2" framing did not survive contact with retail
+reality and is withdrawn:
+
+- **Amount matching is not reliable evidence.** `AmountTotal` is the only field that crosses the crash
+  gap (updates above), and in retail the same amount recurs constantly — single-item sales at standard
+  price points. The dangerous case: the in-flight POST never reached the device, the device's actual
+  last transaction is an unrelated prior same-amount sale, and an amount match silently attributes that
+  outcome to this sale. Even the "single-register terminal" carve-out inherits this false-attribution
+  risk, so no auto-adopt configuration is sanctioned at all.
+- **Consequence:** when resuming the persisted polling URL cannot resolve an outcome (no URL was
+  persisted, or the poll answers `PollingUrlInvalid`), the outcome is **`Unknown` → manual
+  reconciliation**. There is no programmatic fallback; integrations should raise an alert so the
+  operator or back office verifies against the terminal/acquirer records before re-tendering.
+- **`GetLastTransactionResultAsync` stays in the API as a diagnostic.** The device's last transaction is
+  useful supporting *evidence* during reconciliation and support investigations, but its result must
+  never be adopted as a transaction's outcome, and its documentation now says so.
+- Where earlier text in this document says "Layer 2 recovery", read it as historical: resume-by-polling-URL
+  is the only recovery mechanism.
 
 ---
 
@@ -468,8 +492,8 @@ is exactly what surfaced the over-broad original line.
   correlation id is the server-generated `transactionId`. The underlying design gap may get an idempotency-key
   fix 6–12 months out (Decision 6); not counted on.
 - **`SaleData` echo:** probed live 2026-06-17 — echoed in the transaction's own completed result, **not** in
-  `Journal.GetTransResult`, so it cannot serve as a Layer-2 recovery correlation key (Decision 10's
-  2026-06-17 update).
+  `Journal.GetTransResult`, so it cannot serve as a journal correlation key (Decision 10's 2026-06-17
+  update).
 - **Non-financial operation status mapping:** the financial outcome mapper mis-reported non-financial success
   as `Failed` (live: `Terminal.GetStatus` `Result=OK`/`Status=READY` → `Failed`). Resolved by giving the genuine
   non-transaction ops their own `SmartConnectOperationResult` / `SmartConnectOperationStatus`, then **narrowed**

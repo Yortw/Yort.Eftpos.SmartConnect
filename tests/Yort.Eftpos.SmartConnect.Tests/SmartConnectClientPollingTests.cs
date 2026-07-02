@@ -262,7 +262,7 @@ public class SmartConnectClientPollingTests
 	public async Task Poll_ProtocolVerdictOnUrl_StopsImmediatelyWithPollingUrlInvalid(HttpStatusCode status)
 	{
 		// (F8) These are ANSWERS saying the URL itself is no good — spinning NetworkError to timeout would
-		// waste MaxPollDuration and mislead the operator. Stop at once; the driver falls through to Layer 2.
+		// waste MaxPollDuration and mislead the operator. Stop at once; the caller reconciles manually.
 		var store = new InMemoryTransactionStateStore();
 		var pollAttempts = 0;
 		var handler = new MockHttpHandler(_ =>
@@ -283,7 +283,7 @@ public class SmartConnectClientPollingTests
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
 		Assert.Equal(SmartConnectFailureCause.PollingUrlInvalid, result.FailureCause);
 		Assert.Equal(2, pollAttempts);
-		// Sentinel stays pending — the outcome is unresolved and recovery (Layer 2) must investigate.
+		// Sentinel stays pending — the outcome is unresolved until manual reconciliation closes it.
 		Assert.Null(store.Records[Ref].Status);
 		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
 	}

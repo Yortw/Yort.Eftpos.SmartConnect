@@ -276,7 +276,7 @@ internal static class Program
 		var chosen = pending[index - 1];
 		if (string.IsNullOrEmpty(chosen.PollingUrl))
 		{
-			Console.WriteLine("No polling URL persisted for this record — use the Journal probe (Layer 2) and reconcile manually.");
+			Console.WriteLine("No polling URL persisted for this record — the outcome cannot be recovered programmatically; reconcile manually (the Journal probe, menu 6, can show the device's last transaction as evidence).");
 			return;
 		}
 
@@ -290,10 +290,10 @@ internal static class Program
 		}
 	}
 
-	// Exercises the library's Layer-2 recovery query (Journal.GetTransResult): fetches the terminal's most-
+	// Exercises the library's diagnostic journal query (Journal.GetTransResult): fetches the terminal's most-
 	// recent transaction. DEVICE-scoped, not register-scoped (Decision 10) — on a terminal shared by several
-	// registers this can return another register's transaction, so a real recovery must confirm the reported
-	// transaction matches its sentinel (ReferenceId / AmountTotal) before adopting it.
+	// registers this can return another register's transaction, and nothing in the result reliably identifies
+	// it as any particular sale. Evidence for manual reconciliation only; never adopt it as an outcome.
 	private static async Task JournalQueryAsync(SmartConnectClient client)
 	{
 		var result = await client.GetLastTransactionResultAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false);
@@ -351,7 +351,7 @@ internal static class Program
 		Console.WriteLine($"Ref: {clientTransactionRef}   TransactionId: {result.TransactionId}");
 		if (!string.IsNullOrEmpty(result.ReferenceId))
 		{
-			// Journal.GetTransResult path: the recovered transaction's id, distinct from the query's TransactionId.
+			// Journal.GetTransResult path: the reported transaction's id, distinct from the query's TransactionId.
 			Console.WriteLine($"ReferenceId (reported txn): {result.ReferenceId}");
 		}
 
@@ -383,7 +383,8 @@ internal static class Program
 		if (result.Status == SmartConnectTransactionStatus.Unknown)
 		{
 			Console.WriteLine("OUTCOME UNKNOWN — the customer may or may not have been charged.");
-			Console.WriteLine("Do NOT retry. Verify via Journal.GetTransResult (menu 6) or the acquirer before re-tendering.");
+			Console.WriteLine("Do NOT retry. Reconcile manually against the acquirer/terminal records before re-tendering");
+			Console.WriteLine("(Journal.GetTransResult, menu 6, shows the device's last transaction as evidence only).");
 		}
 
 		Transcript($"RESULT ref={clientTransactionRef} status={result.Status} cause={result.FailureCause} txnId={result.TransactionId} auth={result.AuthId} total={result.AmountTotal.ToCents()}c surcharge={result.AmountSurcharge.ToCents()}c tip={result.AmountTip.ToCents()}c");

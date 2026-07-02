@@ -36,7 +36,7 @@ public class TransactionResponseParserTests
 		}
 	}";
 
-	// Journal.GetTransResult (Layer-2 recovery) returns the SUBJECT transaction's id in data.ReferenceId,
+	// Journal.GetTransResult (diagnostic query) returns the SUBJECT transaction's id in data.ReferenceId,
 	// while the envelope transactionId is the query's OWN id (verified live, ADR Decision 10, 2026-06-16).
 	private const string JournalResponse = @"{
 		""transactionId"": ""query-own-id"",

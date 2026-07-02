@@ -310,12 +310,12 @@ public sealed class SmartConnectClient : IDisposable
 	}
 
 	/// <summary>
-	/// Resumes polling a persisted polling URL after a crash/restart (Layer-1 recovery). Jumps straight to
-	/// the poll loop: the sentinel already exists from before the crash, so neither
-	/// <c>SaveTransactionAttemptAsync</c> nor <c>UpdatePollingDetailsAsync</c> is called;
+	/// Resumes polling a persisted polling URL after a crash/restart — the only programmatic way to recover
+	/// a transaction's outcome. Jumps straight to the poll loop: the sentinel already exists from before the
+	/// crash, so neither <c>SaveTransactionAttemptAsync</c> nor <c>UpdatePollingDetailsAsync</c> is called;
 	/// <c>UpdateCompletedAsync</c> IS called when a terminal state is reached. Never throws for runtime
-	/// conditions — an expired URL surfaces as <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>
-	/// (fall through to <see cref="GetLastTransactionResultAsync(SmartConnectRegistration)"/>).
+	/// conditions — an expired URL surfaces as <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>,
+	/// meaning the outcome can no longer be determined programmatically: resolve it by manual reconciliation.
 	/// </summary>
 	/// <param name="pollingUrl">The persisted polling URL (carries the access token — handle accordingly).</param>
 	/// <param name="clientTransactionRef">The reference the transaction's state is persisted under.</param>
@@ -363,11 +363,14 @@ public sealed class SmartConnectClient : IDisposable
 	}
 
 	/// <summary>
-	/// Queries the result of the register's last transaction via the deprecated <c>Journal.GetTransResult</c>
-	/// (Layer-2 recovery, used when no usable polling URL exists). Makes NO state-store calls — the caller
-	/// owns the existing sentinel and updates it after interpreting the result. The POST phase throws the
-	/// typed transport exception (this is a read-only, idempotent query — safe to retry the whole call
-	/// regardless of <see cref="SmartConnectTransportException.Delivery"/>); the poll phase is result-based.
+	/// Queries the result of the terminal's last transaction via the deprecated <c>Journal.GetTransResult</c>.
+	/// This is a DIAGNOSTIC, not a recovery mechanism: the call is device-scoped (on a shared terminal it can
+	/// return another register's transaction) and nothing in the response reliably identifies the returned
+	/// transaction as any particular sale — so its result must never be adopted as a transaction's outcome.
+	/// Use it as supporting evidence during manual reconciliation. Makes NO state-store calls — the caller
+	/// owns any existing sentinel. The POST phase throws the typed transport exception (this is a read-only,
+	/// idempotent query — safe to retry the whole call regardless of
+	/// <see cref="SmartConnectTransportException.Delivery"/>); the poll phase is result-based.
 	/// </summary>
 	/// <param name="registration">The registration triple, matching pairing and the original transaction.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="registration"/> is null.</exception>
@@ -609,7 +612,7 @@ public sealed class SmartConnectClient : IDisposable
 
 	// The operation methods share the non-financial core but return the OPERATION result shape, not the
 	// financial transaction shape — a non-financial response has no approve/decline and no money fields.
-	// (Journal.GetTransResult is the exception: it reports a recovered TRANSACTION, so it keeps the financial
+	// (Journal.GetTransResult is the exception: it reports a prior TRANSACTION, so it keeps the financial
 	// result and does not route through here.)
 	private async Task<SmartConnectOperationResult> ExecuteOperationAsync(SmartConnectRegistration registration, string transactionType, IProgress<SmartConnectPollingStatus>? progress)
 	{
@@ -672,8 +675,8 @@ public sealed class SmartConnectClient : IDisposable
 	/// <summary>The inter-poll delay. Internal seam so tests advance a fake clock instead of sleeping.</summary>
 	internal Func<TimeSpan, Task> PollDelay { get; set; } = interval => Task.Delay(interval);
 
-	// A null clientTransactionRef means "no state-store interaction at all" — the Layer-2 journal-query
-	// mode, where the driver owns the original transaction's sentinel.
+	// A null clientTransactionRef means "no state-store interaction at all" — the diagnostic journal-query
+	// mode, where the caller owns any original transaction's sentinel.
 	private async Task<SmartConnectTransactionResult> PollForResultAsync(string pollingUrl, string? transactionId, string? clientTransactionRef, IProgress<SmartConnectPollingStatus>? progress)
 	{
 		var startedAt = Clock();
@@ -736,8 +739,8 @@ public sealed class SmartConnectClient : IDisposable
 					{
 						// (F8) An ANSWER saying the URL itself is no good — spinning NetworkError to
 						// timeout would waste MaxPollDuration and mislead the operator. The sentinel stays
-						// pending: the outcome is unresolved and Layer-2 recovery must investigate.
-						SafeLog(LogLevel.Error, null, "SmartConnect answered the poll with HTTP {StatusCode} for {ClientTransactionRef} — the polling URL is invalid or expired. Outcome UNKNOWN; fall through to journal recovery.", (int)response.StatusCode, clientTransactionRef);
+						// pending: the outcome is unresolved and only manual reconciliation can resolve it.
+						SafeLog(LogLevel.Error, null, "SmartConnect answered the poll with HTTP {StatusCode} for {ClientTransactionRef} — the polling URL is invalid or expired. Outcome UNKNOWN; manual reconciliation required.", (int)response.StatusCode, clientTransactionRef);
 						return new SmartConnectTransactionResult
 						{
 							Status = SmartConnectTransactionStatus.Unknown,

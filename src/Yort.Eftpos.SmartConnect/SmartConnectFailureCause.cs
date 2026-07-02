@@ -32,8 +32,8 @@ public enum SmartConnectFailureCause
 
 	/// <summary>
 	/// SmartConnect answered the poll with a verdict that the polling URL itself is no good
-	/// (401/403/404/410) — the transaction's outcome cannot be learned by polling. Never blind-retry; fall
-	/// through to the journal-based recovery flow (Layer 2).
+	/// (401/403/404/410) — the transaction's outcome cannot be learned by polling. Never blind-retry; the
+	/// outcome must be resolved by manual reconciliation (the sentinel stays pending until then).
 	/// </summary>
 	PollingUrlInvalid = 5
 }

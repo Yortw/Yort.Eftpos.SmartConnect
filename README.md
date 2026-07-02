@@ -98,16 +98,19 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 {
 	if (!string.IsNullOrEmpty(pending.PollingUrl))
 	{
-		// Layer 1: resume polling the persisted URL.
+		// Resume polling the persisted URL — the ONLY programmatic way to recover an outcome.
 		var recovered = await client.ResumePollingAsync(pending.PollingUrl, pending.ClientTransactionRef);
-		// recovered.FailureCause == PollingUrlInvalid means the URL expired — fall through to Layer 2.
+		// recovered.FailureCause == PollingUrlInvalid means the URL expired: the outcome is
+		// unknown — resolve it by manual reconciliation, then update the sentinel yourself.
 	}
 	else
 	{
-		// Layer 2 (best effort): query the register's last transaction and match it to the sentinel
-		// yourself. Journal.GetTransResult is vendor-deprecated and undocumented for async mode —
-		// verify it against the dev environment before relying on it.
-		var last = await client.GetLastTransactionResultAsync(new SmartConnectRegistration
+		// No polling URL was persisted (the crash hit before it arrived): the outcome CANNOT be
+		// determined programmatically. Surface this sale as unknown and reconcile manually against
+		// the terminal/acquirer records. GetLastTransactionResultAsync can fetch the device's last
+		// transaction as supporting EVIDENCE, but it is device-scoped and nothing in its result
+		// reliably identifies that transaction as this sale — never adopt it as the outcome.
+		var evidence = await client.GetLastTransactionResultAsync(new SmartConnectRegistration
 		{
 			POSRegisterID = registerId,
 			POSBusinessName = "My Store",
@@ -121,7 +124,7 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 
 - **The state store is load-bearing, not optional.** The library writes a sentinel *before* every transaction POST and refuses to send if that write fails — it is the only thing that makes a crash mid-transaction recoverable. The bundled `FileBasedTransactionStateStore` is a reference implementation (pre-sized records, transient-IO retry, atomic writes); production systems with a database should implement `ISmartConnectTransactionState` against it.
 - **The polling URL contains a bearer credential** (`merchantAccessToken`). The library never logs it; your state store persists it, so restrict access to wherever that lands. Never log it yourself.
-- **There is no idempotency key and no programmatic cancel in the SmartConnect API.** A timed-out POST may still have charged the customer — that is what `Unknown` and the recovery flow are for. Do not blind-retry.
+- **There is no idempotency key and no programmatic cancel in the SmartConnect API.** A timed-out POST may still have charged the customer — that is what `Unknown` is for. Do not blind-retry; route `Unknown` outcomes to manual reconciliation (there is no API that can resolve them for you — see the design doc).
 - **Logging:** supply an `ILogger` via `SmartConnectClientConfiguration.Logger` — normal operation, backoff, store trouble, and every ambiguous outcome are logged with the client transaction reference. Logging failures never affect transaction processing.
 
 ## Trying it against a real dev terminal
@@ -132,7 +135,7 @@ Two warnings: financial menu actions send **real transactions** to the connected
 
 ## Design rationale
 
-The *why* behind the API shape — the result-with-`Unknown` contract, the mandatory state-store, the transport `Delivery` classification, and the verified `Journal.GetTransResult` recovery semantics — is recorded in [docs/design-decisions.md](https://github.com/Yortw/Yort.Eftpos.SmartConnect/blob/main/docs/design-decisions.md).
+The *why* behind the API shape — the result-with-`Unknown` contract, the mandatory state-store, the transport `Delivery` classification, and the verified limits of `Journal.GetTransResult` (a diagnostic only — it cannot reliably identify a specific transaction) — is recorded in [docs/design-decisions.md](https://github.com/Yortw/Yort.Eftpos.SmartConnect/blob/main/docs/design-decisions.md).
 
 ## Licence
 

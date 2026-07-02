@@ -2,8 +2,8 @@ namespace Yort.Eftpos.SmartConnect;
 
 /// <summary>
 /// The register's identity triple, as established at pairing — used by every non-financial operation
-/// (terminal status, logon, settlement, the Layer-2 recovery query, and the unknown-type escape hatch).
-/// The values must match those used at pairing and on financial transactions.
+/// (terminal status, logon, settlement, the last-transaction diagnostic query, and the unknown-type escape
+/// hatch). The values must match those used at pairing and on financial transactions.
 /// </summary>
 public sealed class SmartConnectRegistration
 {

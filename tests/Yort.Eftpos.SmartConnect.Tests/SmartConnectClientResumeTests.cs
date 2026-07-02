@@ -12,8 +12,8 @@ namespace Yort.Eftpos.SmartConnect.Tests;
 
 /// <summary>
 /// Tests for the crash-recovery APIs (Task 11). <c>ResumePollingAsync</c> jumps straight to the poll loop
-/// for a persisted URL (Layer 1); <c>GetLastTransactionResultAsync</c> sends the journal query with NO state
-/// store interaction at all (Layer 2 — the driver interprets and updates the existing sentinel itself).
+/// for a persisted URL; <c>GetLastTransactionResultAsync</c> sends the diagnostic journal query with NO
+/// state store interaction at all (the caller owns any existing sentinel and reconciles manually).
 /// Transport contracts per ADR Decision 9/R5: the journal POST throws the typed transport exception
 /// (idempotent query, like PairAsync); everything in a poll phase stays result-based.
 /// </summary>
@@ -81,7 +81,7 @@ public class SmartConnectClientResumeTests
 		};
 	}
 
-	// --- ResumePollingAsync (Layer 1) ---
+	// --- ResumePollingAsync ---
 
 	[Fact]
 	public async Task Resume_PollsTheGivenUrl_NoPostIsSent()
@@ -133,8 +133,8 @@ public class SmartConnectClientResumeTests
 	[InlineData(HttpStatusCode.NotFound)]
 	public async Task Resume_ExpiredUrl_ReturnsPollingUrlInvalid_NoSpinToTimeout(HttpStatusCode status)
 	{
-		// (F8) The whole point of the classification: an expired persisted URL must fall through to
-		// Layer 2 immediately, not burn MaxPollDuration pretending it's a network problem.
+		// (F8) The whole point of the classification: an expired persisted URL must surface
+		// PollingUrlInvalid immediately, not burn MaxPollDuration pretending it's a network problem.
 		var store = StoreWithPendingSentinel();
 		var attempts = 0;
 		var handler = new MockHttpHandler(_ =>
@@ -200,7 +200,7 @@ public class SmartConnectClientResumeTests
 		await Assert.ThrowsAsync<ArgumentException>(() => client.ResumePollingAsync(PollUrl, " "));
 	}
 
-	// --- GetLastTransactionResultAsync (Layer 2) ---
+	// --- GetLastTransactionResultAsync (diagnostic journal query) ---
 
 	[Fact]
 	public async Task GetLast_SendsJournalGetTransResultPost()
