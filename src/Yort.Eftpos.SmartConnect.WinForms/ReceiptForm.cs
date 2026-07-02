@@ -77,7 +77,9 @@ internal sealed class ReceiptForm : Form
 		// awaiter (as dismissed) before replacing its TCS, or that caller's await hangs forever and its
 		// finally (owner Restore) never runs.
 		_ack?.TrySetResult(true);
-		_ack = new TaskCompletionSource<bool>();
+		// RunContinuationsAsynchronously: see PairingForm — keeps caller continuations out of click
+		// handlers, OnFormClosing, and the pre-emption line above.
+		_ack = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 		if (!Visible)
 		{
 			Show();

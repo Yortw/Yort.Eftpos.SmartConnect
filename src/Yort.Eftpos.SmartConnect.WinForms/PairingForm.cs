@@ -103,7 +103,12 @@ internal sealed class PairingForm : Form, IPairingView
 		// F4-style pre-emption: complete any prior awaiter (as cancelled) before replacing its TCS, so a
 		// re-entrant call can never strand the first caller on a task nothing will ever complete.
 		_codeResult?.TrySetResult(null);
-		_codeResult = new TaskCompletionSource<string?>();
+		// RunContinuationsAsynchronously (here and on every form TCS): TrySetResult runs on the UI thread,
+		// and the awaiter's captured context is that same thread — without this option the caller's
+		// continuation executes INLINE at the TrySetResult call site (inside click handlers, OnFormClosing,
+		// and the pre-emption path above), where it can dispose the form out from under the code that
+		// follows. Queueing the continuation via the sync context removes the whole re-entrancy class.
+		_codeResult = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
 		return _codeResult.Task;
 	}
 
@@ -135,7 +140,7 @@ internal sealed class PairingForm : Form, IPairingView
 		_retry.Focus();
 		// F4-style pre-emption: prior failure awaiter resolves as "don't retry" (see GetCodeAsync).
 		_failureResult?.TrySetResult(false);
-		_failureResult = new TaskCompletionSource<bool>();
+		_failureResult = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 		return _failureResult.Task;
 	}
 
@@ -155,7 +160,7 @@ internal sealed class PairingForm : Form, IPairingView
 		_ok.Focus();
 		// F4-style pre-emption: prior success awaiter resolves as acknowledged (see GetCodeAsync).
 		_successAck?.TrySetResult(true);
-		_successAck = new TaskCompletionSource<bool>();
+		_successAck = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 		return _successAck.Task;
 	}
 

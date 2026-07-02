@@ -133,7 +133,11 @@ internal sealed class ProgressForm : Form, IProgressView
 		_resultPanel.BringToFront();
 		_ok.Focus();
 
-		_resultAck = new TaskCompletionSource<bool>();
+		// RunContinuationsAsynchronously: without it the pre-empted caller (line above completes its TCS
+		// on this same UI thread/context) resumes INLINE at the TrySetResult site — if its continuation
+		// exits a using block and disposes this form, the Show() above then throws on a form the guard at
+		// the top already vetted. Queueing continuations removes that re-entrancy class (see PairingForm).
+		_resultAck = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 		if (autoCloseAfter.HasValue)
 		{
 			// F3: DialogTimeouts guards against <= 0 (Timer.Interval throws) and int overflow.
