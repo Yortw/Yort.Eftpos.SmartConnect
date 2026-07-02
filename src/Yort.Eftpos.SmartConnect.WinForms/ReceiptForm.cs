@@ -73,6 +73,10 @@ internal sealed class ReceiptForm : Form
 		_receipt.Text = receipt ?? string.Empty;
 		LayoutToContent();
 
+		// F4-style pre-emption (as ProgressForm.ShowResultAsync): a second call must complete the prior
+		// awaiter (as dismissed) before replacing its TCS, or that caller's await hangs forever and its
+		// finally (owner Restore) never runs.
+		_ack?.TrySetResult(true);
 		_ack = new TaskCompletionSource<bool>();
 		if (!Visible)
 		{

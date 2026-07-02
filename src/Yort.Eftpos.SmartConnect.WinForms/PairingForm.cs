@@ -100,6 +100,9 @@ internal sealed class PairingForm : Form, IPairingView
 		BringToFront();
 		Activate();
 		_code.Focus();
+		// F4-style pre-emption: complete any prior awaiter (as cancelled) before replacing its TCS, so a
+		// re-entrant call can never strand the first caller on a task nothing will ever complete.
+		_codeResult?.TrySetResult(null);
 		_codeResult = new TaskCompletionSource<string?>();
 		return _codeResult.Task;
 	}
@@ -130,6 +133,8 @@ internal sealed class PairingForm : Form, IPairingView
 		AcceptButton = _retry;
 		CancelButton = _cancel2;
 		_retry.Focus();
+		// F4-style pre-emption: prior failure awaiter resolves as "don't retry" (see GetCodeAsync).
+		_failureResult?.TrySetResult(false);
 		_failureResult = new TaskCompletionSource<bool>();
 		return _failureResult.Task;
 	}
@@ -148,6 +153,8 @@ internal sealed class PairingForm : Form, IPairingView
 		AcceptButton = _ok;
 		CancelButton = _ok;
 		_ok.Focus();
+		// F4-style pre-emption: prior success awaiter resolves as acknowledged (see GetCodeAsync).
+		_successAck?.TrySetResult(true);
 		_successAck = new TaskCompletionSource<bool>();
 		return _successAck.Task;
 	}
