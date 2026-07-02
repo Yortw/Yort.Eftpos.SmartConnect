@@ -108,14 +108,20 @@ internal static class TransactionResponseParser
 	/// <summary>Maps the SmartConnect <c>TransactionResult</c> + <c>Result</c> pair to an outcome status.</summary>
 	internal static SmartConnectTransactionStatus MapOutcome(string? transactionResult, string? result)
 	{
-		if (Eq(transactionResult, "OK-ACCEPTED") && Eq(result, "OK"))
+		if (Eq(transactionResult, "OK-ACCEPTED") || Eq(transactionResult, "OK-DECLINED"))
 		{
-			return SmartConnectTransactionStatus.Accepted;
-		}
+			if (Eq(result, "OK"))
+			{
+				return Eq(transactionResult, "OK-ACCEPTED")
+					? SmartConnectTransactionStatus.Accepted
+					: SmartConnectTransactionStatus.Declined;
+			}
 
-		if (Eq(transactionResult, "OK-DECLINED") && Eq(result, "OK"))
-		{
-			return SmartConnectTransactionStatus.Declined;
+			// A verdict-bearing TransactionResult whose Result does not corroborate is CONTRADICTORY
+			// evidence about a financial outcome — the terminal may have approved it. Asserting Failed
+			// here invites a re-tender over a possibly-live charge; Unknown routes to reconciliation.
+			// (The non-financial mapper applies the same never-assert-what-we-cannot-see rule.)
+			return SmartConnectTransactionStatus.Unknown;
 		}
 
 		if (Eq(transactionResult, "CANCELLED"))
@@ -125,6 +131,8 @@ internal static class TransactionResponseParser
 				: SmartConnectTransactionStatus.Cancelled;
 		}
 
+		// No accept/decline claim present at all — a failure shape (known or novel). Deliberately NOT
+		// Unknown: flipping this fallback would route every genuine failure to manual reconciliation.
 		return SmartConnectTransactionStatus.Failed;
 	}
 

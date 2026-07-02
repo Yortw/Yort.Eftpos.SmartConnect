@@ -169,9 +169,18 @@ public class TransactionResponseParserTests
 	[InlineData("OK-DECLINED", "OK", SmartConnectTransactionStatus.Declined)]
 	[InlineData("CANCELLED", "OK", SmartConnectTransactionStatus.Cancelled)]
 	[InlineData("CANCELLED", "FAILED-INTERFACE", SmartConnectTransactionStatus.DeviceOffline)]
-	[InlineData("OK-ACCEPTED", "FAILED", SmartConnectTransactionStatus.Failed)]
+	// A verdict-bearing TransactionResult (OK-ACCEPTED/OK-DECLINED) whose Result does NOT corroborate is
+	// CONTRADICTORY evidence about a financial outcome — Unknown (reconcile), never Failed: reporting
+	// Failed on a transaction the terminal may have approved invites a re-tender and a double charge.
+	[InlineData("OK-ACCEPTED", "FAILED", SmartConnectTransactionStatus.Unknown)]
+	[InlineData("OK-ACCEPTED", "", SmartConnectTransactionStatus.Unknown)]
+	[InlineData("OK-ACCEPTED", null, SmartConnectTransactionStatus.Unknown)]
+	[InlineData("OK-DECLINED", "FAILED", SmartConnectTransactionStatus.Unknown)]
+	[InlineData("OK-DECLINED", null, SmartConnectTransactionStatus.Unknown)]
+	// An UNRECOGNISED TransactionResult carries no accept/decline claim at all — Failed stands (flipping
+	// the fallback to Unknown would route every genuine vendor failure shape to manual reconciliation).
 	[InlineData("WHATEVER", "OK", SmartConnectTransactionStatus.Failed)]
-	public void MapOutcome_MapsPerTable(string transactionResult, string result, SmartConnectTransactionStatus expected)
+	public void MapOutcome_MapsPerTable(string transactionResult, string? result, SmartConnectTransactionStatus expected)
 	{
 		Assert.Equal(expected, TransactionResponseParser.MapOutcome(transactionResult, result));
 	}
