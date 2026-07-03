@@ -1,0 +1,109 @@
+name: Publish
+
+# Dormant until go-public: the push authenticates with NUGET_API_KEY, which does not exist yet, so a run
+# would fail at the push step. Publishing to the private RTSTNZ feed stays manual in the interim.
+on:
+  push:
+    tags:
+      - 'core-v*'
+      - 'winforms-v*'
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package to publish
+        required: true
+        type: choice
+        options:
+          - core
+          - winforms
+      version:
+        description: Version to publish (must equal the package's committed csproj <Version>)
+        required: true
+        type: string
+
+# Never cancel an in-flight publish.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Pack & publish to NuGet
+    # Windows is required: the WinForms package targets net48 and net8.0-windows.
+    runs-on: windows-latest
+    # Scopes NUGET_API_KEY and allows an optional required-reviewer rule to be added later without
+    # touching this file.
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # F6: event context passed via env, never interpolated inline into the run body.
+      - name: Resolve package and version
+        id: resolve
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PACKAGE: ${{ github.event.inputs.package }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if ($env:EVENT_NAME -eq 'workflow_dispatch') {
+            .github/scripts/Resolve-PublishTarget.ps1 -Package $env:INPUT_PACKAGE -Version $env:INPUT_VERSION
+          } else {
+            .github/scripts/Resolve-PublishTarget.ps1 -Tag $env:REF_NAME
+          }
+
+      - name: Restore
+        run: dotnet restore Yort.Eftpos.SmartConnect.sln
+
+      - name: Build
+        run: dotnet build Yort.Eftpos.SmartConnect.sln -c Release --no-restore
+
+      # Tests gate the publish — never push untested/unbuildable code to an irreversible public feed.
+      - name: Test
+        run: dotnet test Yort.Eftpos.SmartConnect.sln -c Release --no-build
+
+      # Pack ONLY the resolved project; its committed csproj <Version> is used as-is (no -p:Version).
+      - name: Pack
+        run: dotnet pack "${{ steps.resolve.outputs.project }}" -c Release --no-build -o ${{ runner.temp }}/nupkg
+
+      # F1: assert exactly one package was produced and its version matches what was validated — closes the
+      # csproj-read-vs-MSBuild-eval seam, the single-package assumption, and the wildcard-push blast radius.
+      - name: Verify packed artifact
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          $pkgs = Get-ChildItem "${{ runner.temp }}/nupkg" -Filter *.nupkg
+          if ($pkgs.Count -ne 1) { throw "Expected exactly one .nupkg, found $($pkgs.Count)." }
+          if ($pkgs[0].Name -notlike "*.$($env:EXPECTED_VERSION).nupkg") {
+            throw "Packed '$($pkgs[0].Name)' does not match the validated version '$($env:EXPECTED_VERSION)'."
+          }
+          Write-Host "Packed $($pkgs[0].Name)"
+
+      - name: Push to NuGet
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push "${{ runner.temp }}/nupkg/*.nupkg" `
+            --source https://api.nuget.org/v3/index.json `
+            --api-key $env:NUGET_API_KEY `
+            --skip-duplicate
+
+      # F4: informational summary. Note: --skip-duplicate means a re-push of an existing version is a green
+      # no-op — the summary states what was targeted, not whether it was newly created.
+      - name: Summary
+        shell: pwsh
+        env:
+          PROJECT: ${{ steps.resolve.outputs.project }}
+          PKG_VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          "Targeted **$($env:PROJECT)** version **$($env:PKG_VERSION)** on nuget.org (skipped if the version already existed — nuget.org is immutable)." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
