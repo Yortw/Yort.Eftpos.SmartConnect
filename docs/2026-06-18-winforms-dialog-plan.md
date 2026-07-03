@@ -1,7 +1,5 @@
 # Yort.Eftpos.SmartConnect.WinForms Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Build a WinForms companion package with two dialogs — a progress/outcome dialog for the polling operations and a pairing dialog — over the public surface of the core `Yort.Eftpos.SmartConnect` client.
 
 **Architecture:** All decision logic lives in small, UI-free internal types (caption/severity resolution, the pairing loop state machine, owner-window control) behind narrow internal *view* interfaces; the WinForms `Form`s are thin views implementing those interfaces. This isolates the testable logic from the untestable `Form`, mirroring the spec's testing strategy. The public surface is two `IDisposable` wrapper types; each `Form` stays internal.
