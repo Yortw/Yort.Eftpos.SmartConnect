@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Yortw/Yort.Eftpos.SmartConnect/security/policy
+    about: Do not open a public issue for a vulnerability — report it privately (see SECURITY.md).
+  - name: SmartConnect service / terminal / merchant-account issue
+    url: https://smartconnectdev.shift4.co.nz
+    about: Problems with the SmartConnect service, a payment terminal, or your account are not this project — contact Shift4 / SmartPay.

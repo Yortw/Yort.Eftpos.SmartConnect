@@ -1,0 +1,22 @@
+# Keeps the NuGet dependencies and GitHub Actions current, and — paired with the repo's deliberate
+# choice to keep NuGet audit advisories (NU19xx) as warnings — surfaces a newly-disclosed CVE against a
+# pinned dependency as a PR rather than only a build warning.
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # The dependency versions in the csprojs are deliberate minimum floors (see the comments there); review
+    # bumps against that intent rather than auto-merging.
+    commit-message:
+      prefix: "build"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build"
