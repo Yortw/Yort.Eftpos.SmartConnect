@@ -125,7 +125,7 @@ public sealed class SmartConnectProgressDialog : IDisposable
 		}
 
 		EnsureAppearanceAndOwner();
-		var visual = ResultVisuals.ForTransaction(result.Status, (IReadOnlyDictionary<SmartConnectTransactionStatus, string>)TransactionResultCaptions);
+		var visual = ResultVisuals.ForTransaction(result.Status, result.ErrorMessage, (IReadOnlyDictionary<SmartConnectTransactionStatus, string>)TransactionResultCaptions);
 		return _controller.ShowResultAsync(visual, autoCloseAfter);
 	}
 
