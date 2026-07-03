@@ -93,6 +93,9 @@ jobs:
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
+          if (-not $env:NUGET_API_KEY) {
+            throw "NUGET_API_KEY secret is not configured — the publish workflow is dormant until go-public. Add it to the 'release' environment to enable publishing."
+          }
           dotnet nuget push "${{ runner.temp }}/nupkg/*.nupkg" `
             --source https://api.nuget.org/v3/index.json `
             --api-key $env:NUGET_API_KEY `

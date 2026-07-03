@@ -1,3 +1,4 @@
+#Requires -Version 6
 <#
 .SYNOPSIS
 Resolves and validates the package + version to publish, from either a release tag or explicit inputs.
