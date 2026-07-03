@@ -66,7 +66,7 @@ public class SmartConnectClientNonFinancialTests
 		{
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo"
+			POSVendorName = "DemoVendor"
 		};
 	}
 
@@ -117,7 +117,7 @@ public class SmartConnectClientNonFinancialTests
 
 		Assert.Equal(SmartConnectOperationStatus.Succeeded, result.Status);
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Terminal.GetStatus",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Terminal.GetStatus",
 			handler.Requests[0].Body);
 	}
 
@@ -137,7 +137,7 @@ public class SmartConnectClientNonFinancialTests
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		// Literal expected body (protocol-fake rule).
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=" + Uri.EscapeDataString(expectedWireType),
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=" + Uri.EscapeDataString(expectedWireType),
 			handler.Requests[0].Body);
 	}
 
@@ -355,7 +355,7 @@ public class SmartConnectClientNonFinancialTests
 			AmountTotal = Money.FromCents(0),
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo",
+			POSVendorName = "DemoVendor",
 			ClientTransactionRef = "ref-1"
 		}));
 	}

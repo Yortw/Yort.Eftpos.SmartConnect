@@ -38,7 +38,7 @@ public class SmartConnectClientPairingTests
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSRegisterName = "Register 1",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo"
+			POSVendorName = "DemoVendor"
 		};
 	}
 
@@ -114,7 +114,7 @@ public class SmartConnectClientPairingTests
 		// Literal expected body — deliberately NOT computed via FormUrlEncoder, so an encoding defect in
 		// the library cannot self-confirm here.
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSRegisterName=Register%201&POSBusinessName=Demo%20Business&POSVendorName=Ontempo",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSRegisterName=Register%201&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor",
 			handler.Requests[0].Body);
 	}
 
@@ -129,7 +129,7 @@ public class SmartConnectClientPairingTests
 		await client.PairAsync("12345678", request);
 
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor",
 			handler.Requests[0].Body);
 	}
 

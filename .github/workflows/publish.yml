@@ -1,7 +1,7 @@
 name: Publish
 
 # Dormant until go-public: the push authenticates with NUGET_API_KEY, which does not exist yet, so a run
-# would fail at the push step. Publishing to the private RTSTNZ feed stays manual in the interim.
+# would fail at the push step. Publishing to a private feed stays manual in the interim.
 on:
   push:
     tags:

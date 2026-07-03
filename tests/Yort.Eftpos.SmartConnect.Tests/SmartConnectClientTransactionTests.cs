@@ -43,7 +43,7 @@ public class SmartConnectClientTransactionTests
 			AmountTotal = Money.FromCents(1250),
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo",
+			POSVendorName = "DemoVendor",
 			ClientTransactionRef = Ref
 		};
 	}
@@ -91,7 +91,7 @@ public class SmartConnectClientTransactionTests
 
 		// Literal expected body (protocol-fake rule): an encoding defect cannot self-confirm here.
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.Purchase&AmountTotal=1250",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Card.Purchase&AmountTotal=1250",
 			handler.Requests[0].Body);
 	}
 
@@ -107,7 +107,7 @@ public class SmartConnectClientTransactionTests
 		await client.ProcessTransactionAsync(request);
 
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.PurchasePlusCash&AmountTotal=1250&AmountCash=250",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Card.PurchasePlusCash&AmountTotal=1250&AmountCash=250",
 			handler.Requests[0].Body);
 	}
 
@@ -123,7 +123,7 @@ public class SmartConnectClientTransactionTests
 		await client.ProcessTransactionAsync(request);
 
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.Refund&AmountTotal=1250",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Card.Refund&AmountTotal=1250",
 			handler.Requests[0].Body);
 	}
 
@@ -144,7 +144,7 @@ public class SmartConnectClientTransactionTests
 			await client.ProcessTransactionAsync(request);
 
 			Assert.Equal(
-				"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.Purchase&AmountTotal=1250",
+				"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Card.Purchase&AmountTotal=1250",
 				handler.Requests[0].Body);
 		}
 		finally

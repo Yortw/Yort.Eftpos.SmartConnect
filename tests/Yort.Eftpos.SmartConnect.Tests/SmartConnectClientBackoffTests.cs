@@ -75,7 +75,7 @@ public class SmartConnectClientBackoffTests
 			AmountTotal = Money.FromCents(1250),
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo",
+			POSVendorName = "DemoVendor",
 			ClientTransactionRef = "100123-abc"
 		};
 	}

@@ -77,7 +77,7 @@ public class SmartConnectClientResumeTests
 		{
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo"
+			POSVendorName = "DemoVendor"
 		};
 	}
 
@@ -217,7 +217,7 @@ public class SmartConnectClientResumeTests
 		Assert.Equal("https://unit.test/POS/Transaction", handler.Requests[0].Uri?.AbsoluteUri);
 		// Literal expected body (protocol-fake rule).
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Journal.GetTransResult",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Journal.GetTransResult",
 			handler.Requests[0].Body);
 	}
 

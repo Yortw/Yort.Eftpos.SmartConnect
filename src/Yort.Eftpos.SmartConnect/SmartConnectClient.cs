@@ -1098,7 +1098,7 @@ public sealed class SmartConnectClient : IDisposable
 
 	private static ProductInfoHeaderValue BuildUserAgent(SmartConnectClientConfiguration configuration)
 	{
-		// A configured name like "Ontempo Store" is not a valid HTTP token — fall back to the library
+		// A configured name like "Demo Store" is not a valid HTTP token — fall back to the library
 		// identity rather than throwing at construction over a cosmetic header.
 		if (!string.IsNullOrWhiteSpace(configuration.UserAgentProductName)
 			&& !string.IsNullOrWhiteSpace(configuration.UserAgentProductVersion)
