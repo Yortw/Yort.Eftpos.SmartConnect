@@ -275,23 +275,27 @@ public sealed class SmartConnectClient : IDisposable
 					// didn't answer in time". Epistemically the same state as a transport timeout: the
 					// transaction may be live on the pinpad, so Unknown, sentinel pending. Labelling it
 					// Failed ("blind retry will fail again") would invite a re-tender over a live charge.
-					SafeLog(LogLevel.Error, null, "SmartConnect transaction POST for {ClientTransactionRef} answered HTTP {StatusCode}, which an intermediary can generate after the service received the request — outcome is UNKNOWN; manual reconciliation required. {ServiceError}", request.ClientTransactionRef, (int)response.StatusCode, GetErrorMessage(response, body));
+					var intermediaryError = GetErrorMessage(response, body);
+					SafeLog(LogLevel.Error, null, "SmartConnect transaction POST for {ClientTransactionRef} answered HTTP {StatusCode}, which an intermediary can generate after the service received the request — outcome is UNKNOWN; manual reconciliation required. {ServiceError}", request.ClientTransactionRef, (int)response.StatusCode, intermediaryError);
 					return new SmartConnectTransactionResult
 					{
 						Status = SmartConnectTransactionStatus.Unknown,
-						FailureCause = SmartConnectFailureCause.TransportUnknown
+						FailureCause = SmartConnectFailureCause.TransportUnknown,
+						ErrorMessage = intermediaryError
 					};
 				}
 
 				// A 4xx is a genuine verdict that the request was not processed (429 included: rate-limited
 				// means refused wherever it was generated) — terminal; fix the request/config, blind retry
 				// will fail again.
-				SafeLog(LogLevel.Error, null, "SmartConnect rejected the transaction POST for {ClientTransactionRef}: {ServiceError}", request.ClientTransactionRef, GetErrorMessage(response, body));
+				var serviceError = GetErrorMessage(response, body);
+				SafeLog(LogLevel.Error, null, "SmartConnect rejected the transaction POST for {ClientTransactionRef}: {ServiceError}", request.ClientTransactionRef, serviceError);
 				await CloseSentinelQuietlyAsync(request.ClientTransactionRef, SmartConnectTransactionStatus.Failed).ConfigureAwait(false);
 				return new SmartConnectTransactionResult
 				{
 					Status = SmartConnectTransactionStatus.Failed,
-					FailureCause = SmartConnectFailureCause.ServiceError
+					FailureCause = SmartConnectFailureCause.ServiceError,
+					ErrorMessage = serviceError
 				};
 			}
 

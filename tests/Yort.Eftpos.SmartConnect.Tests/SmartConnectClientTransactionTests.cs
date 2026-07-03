@@ -201,6 +201,8 @@ public class SmartConnectClientTransactionTests
 		Assert.NotEqual(SmartConnectFailureCause.TransportNotSent, result.FailureCause);
 		// The service refused it — terminal; the sentinel closes as Failed.
 		Assert.Equal(SmartConnectTransactionStatus.Failed, store.Records[Ref].Status);
+		// The service's rejection reason is surfaced so a consumer can show/log WHY it failed.
+		Assert.Equal("Invalid register", result.ErrorMessage);
 	}
 
 	[Theory]
@@ -221,6 +223,9 @@ public class SmartConnectClientTransactionTests
 		Assert.Equal(SmartConnectTransactionStatus.Failed, result.Status);
 		Assert.Equal(SmartConnectFailureCause.ServiceError, result.FailureCause);
 		Assert.Equal(SmartConnectTransactionStatus.Failed, store.Records[Ref].Status);
+		// A bodyless rejection still surfaces a reason (the status line) rather than null.
+		Assert.False(string.IsNullOrEmpty(result.ErrorMessage));
+		Assert.Contains(((int)status).ToString(), result.ErrorMessage);
 	}
 
 	[Theory]
@@ -253,6 +258,9 @@ public class SmartConnectClientTransactionTests
 		Assert.Null(store.Records[Ref].Status);
 		// Diagnosability: an ambiguous outcome is always logged as an Error with the ref.
 		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains(Ref));
+		// The gateway/proxy reason is surfaced on the Unknown result too (diagnostic text only).
+		Assert.False(string.IsNullOrEmpty(result.ErrorMessage));
+		Assert.Contains(((int)status).ToString(), result.ErrorMessage);
 	}
 
 	[Fact]

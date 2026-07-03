@@ -18,6 +18,15 @@ public sealed class SmartConnectTransactionResult : SmartConnectResult
 	public SmartConnectFailureCause FailureCause { get; init; } = SmartConnectFailureCause.None;
 
 	/// <summary>
+	/// A human-readable failure reason from the service when the transaction did not complete (for example a
+	/// service rejection message such as "This register is not paired to a device", or a gateway/proxy message
+	/// on an ambiguous <see cref="SmartConnectTransactionStatus.Unknown"/> outcome). Null on success. This is
+	/// diagnostic/display text only — branch on <see cref="Status"/> and <see cref="FailureCause"/>, never on
+	/// this string.
+	/// </summary>
+	public string? ErrorMessage { get; init; }
+
+	/// <summary>
 	/// The id of the transaction actually being <em>reported</em>, when it differs from
 	/// <see cref="SmartConnectResult.TransactionId"/>. Populated from the response's <c>ReferenceId</c> field,
 	/// which <c>Journal.GetTransResult</c> uses to carry the reported (last) transaction's id while the
