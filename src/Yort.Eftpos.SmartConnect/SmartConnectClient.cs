@@ -739,20 +739,27 @@ public sealed class SmartConnectClient : IDisposable
 
 		while (true)
 		{
-			if (_disposed || Clock() >= deadline)
+			// Snapshot the volatile flag once so the log reason and the sentinel decision below cannot disagree
+			// on a torn read.
+			var disposed = _disposed;
+			if (disposed || Clock() >= deadline)
 			{
-				// Poll exhaustion/abandonment is the "live caller" Unknown: the caller gets the result and
-				// owns reconciliation, so the sentinel closes as Unknown (distinct from POST-phase
-				// TransportUnknown, where no response ever arrived). Dispose is a deliberate host action
-				// (shutdown) — Warning; only genuine exhaustion is an Error.
+				// Two UNKNOWN exits, disposed differently:
+				//  - Genuine exhaustion (deadline): the live caller receives Unknown and owns reconciliation,
+				//    so the sentinel closes as Unknown (distinct from POST-phase TransportUnknown, where no
+				//    response ever arrived). An Error.
+				//  - Dispose (host shutdown): the caller is going away and the returned Unknown may never be
+				//    observed, so the sentinel is LEFT PENDING — that pending record is the only thing that
+				//    lets ResumePollingAsync recover the outcome after restart, which is the flow
+				//    ProcessTransactionAsync's remarks direct the host to use. A deliberate action — Warning.
 				SafeLog(
-					_disposed ? LogLevel.Warning : LogLevel.Error,
+					disposed ? LogLevel.Warning : LogLevel.Error,
 					null,
 					"Polling ended without a terminal answer for {ClientTransactionRef} after {ElapsedSeconds}s ({Reason}) — outcome UNKNOWN; reconcile before retrying.",
 					clientTransactionRef ?? "(journal query)",
 					(int)(Clock() - startedAt).TotalSeconds,
-					_disposed ? "client disposed" : "MaxPollDuration exceeded");
-				if (clientTransactionRef != null)
+					disposed ? "client disposed" : "MaxPollDuration exceeded");
+				if (!disposed && clientTransactionRef != null)
 				{
 					await CloseSentinelQuietlyAsync(clientTransactionRef, SmartConnectTransactionStatus.Unknown).ConfigureAwait(false);
 				}
