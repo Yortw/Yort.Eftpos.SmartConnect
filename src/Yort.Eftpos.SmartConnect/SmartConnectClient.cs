@@ -196,7 +196,9 @@ public sealed class SmartConnectClient : IDisposable
 	/// See <see cref="ProcessTransactionAsync(SmartConnectTransactionRequest)"/> for the full contract.
 	/// </summary>
 	/// <param name="request">The transaction to process.</param>
-	/// <param name="progress">An optional progress sink; reports carry no outcome responsibility.</param>
+	/// <param name="progress">An optional progress sink; reports carry no outcome responsibility. An exception
+	/// thrown by the sink is swallowed and logged (a failing side-channel must never abort the transaction),
+	/// so it cannot be used to signal or cancel — it is informational only.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
 	/// <exception cref="ArgumentException">A mandatory field is blank, or the total amount is not positive.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
@@ -786,7 +788,7 @@ public sealed class SmartConnectClient : IDisposable
 						backoffInterval = Min(TimeSpan.FromTicks(backoffInterval.Ticks * 2), _backoffCap);
 						nextDelay = GetRetryAfterDelay(response) ?? backoffInterval;
 						SafeLog(LogLevel.Debug, null, "Rate-limited (HTTP 429) for {ClientTransactionRef} — backing off; next poll in {NextDelaySeconds}s.", clientTransactionRef, (int)nextDelay.TotalSeconds);
-						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.BackingOff });
+						ReportProgress(progress, new SmartConnectPollingStatus { State = SmartConnectPollingState.BackingOff });
 						continue;
 					}
 
@@ -807,7 +809,7 @@ public sealed class SmartConnectClient : IDisposable
 					if (!response.IsSuccessStatusCode)
 					{
 						// 5xx is transient — keep polling within MaxPollDuration (429 is handled above).
-						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
+						ReportProgress(progress, new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
 						continue;
 					}
 
@@ -821,7 +823,7 @@ public sealed class SmartConnectClient : IDisposable
 					catch (JsonException)
 					{
 						// A garbled poll body (proxy blip) is transient — the next poll re-asks.
-						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
+						ReportProgress(progress, new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
 						continue;
 					}
 
@@ -840,7 +842,7 @@ public sealed class SmartConnectClient : IDisposable
 						return result;
 					}
 
-					progress?.Report(new SmartConnectPollingStatus
+					ReportProgress(progress, new SmartConnectPollingStatus
 					{
 						State = poll.Progress == PollProgress.Delayed
 							? SmartConnectPollingState.Delayed
@@ -854,8 +856,28 @@ public sealed class SmartConnectClient : IDisposable
 				// runs, so there is no tight retry-storm. NEVER treat "couldn't reach the server" as "URL
 				// expired" — a live transaction may still be fine.
 				SafeLog(LogLevel.Warning, ex, "Network error during poll for {ClientTransactionRef} — retrying on the next interval.", clientTransactionRef);
-				progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError, Error = ex });
+				ReportProgress(progress, new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError, Error = ex });
 			}
+		}
+	}
+
+	// A consumer's IProgress sink is an informational side-channel; a throw from it (a WinForms Control.Invoke
+	// onto a form the operator just closed is the classic case) must never abort the poll of a live payment.
+	// Swallow and log by type — strictly weaker than the operation, exactly as SafeLog treats a failing logger.
+	private void ReportProgress(IProgress<SmartConnectPollingStatus>? progress, SmartConnectPollingStatus status)
+	{
+		if (progress == null)
+		{
+			return;
+		}
+
+		try
+		{
+			progress.Report(status);
+		}
+		catch (Exception ex)
+		{
+			SafeLog(LogLevel.Warning, null, "A progress report callback threw ({ExceptionType}) — suppressed; it has no bearing on the transaction outcome.", ex.GetType().Name);
 		}
 	}
 

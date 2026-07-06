@@ -49,6 +49,17 @@ public class SmartConnectClientPollingTests
 		public void Report(SmartConnectPollingStatus value) => Reports.Add(value);
 	}
 
+	private sealed class ThrowingProgress : IProgress<SmartConnectPollingStatus>
+	{
+		public int Calls { get; private set; }
+
+		public void Report(SmartConnectPollingStatus value)
+		{
+			Calls++;
+			throw new ObjectDisposedException("progress sink");
+		}
+	}
+
 	private static HttpResponseMessage Json(HttpStatusCode status, string json)
 		=> new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
@@ -365,6 +376,29 @@ public class SmartConnectClientPollingTests
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
 		Assert.Equal(SmartConnectFailureCause.TransportUnknown, result.FailureCause);
 		Assert.Null(store.Records[Ref].Status);
+	}
+
+	[Fact]
+	public async Task Poll_ProgressSinkThrows_SwallowedAndPollingContinues()
+	{
+		// (I4) A consumer's IProgress sink is an informational side-channel — a throw from it (the classic case
+		// is a WinForms Control.Invoke onto a form the operator just closed) must never abort the poll of a
+		// live payment. It is swallowed and logged by type (like a failing logger), and the outcome still
+		// returns normally.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(
+			() => Json(HttpStatusCode.OK, PendingPollJson),
+			() => Json(HttpStatusCode.OK, AcceptedPollJson));
+		var progress = new ThrowingProgress();
+		var logger = new ListLogger();
+		using var client = CreateClient(handler, store, logger);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest(), progress);
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.True(progress.Calls > 0);
+		var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("progress", StringComparison.OrdinalIgnoreCase));
+		Assert.Contains(warning.State, p => p.Key == "ExceptionType" && (string?)p.Value == nameof(ObjectDisposedException));
 	}
 
 	[Fact]
