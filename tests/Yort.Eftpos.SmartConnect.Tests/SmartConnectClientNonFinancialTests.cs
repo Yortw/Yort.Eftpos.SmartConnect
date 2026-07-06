@@ -344,6 +344,20 @@ public class SmartConnectClientNonFinancialTests
 	}
 
 	[Fact]
+	public async Task NonFinancial_UnusablePollingUrlInBody_IsUnknown()
+	{
+		// (M3/F4) The non-financial POST returned an unusable polling URL — operation Unknown, no throw, no
+		// store interaction (the non-financial path never touches the store).
+		var badInitial = "{\"transactionId\": \"txn-1\", \"transactionStatus\": \"PENDING\", \"data\": {\"PollingUrl\": \"relative/path\"}}";
+		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, badInitial)));
+		using var client = CreateClient(handler);
+
+		var result = await client.GetTerminalStatusAsync(CreateRegistration());
+
+		Assert.Equal(SmartConnectOperationStatus.Unknown, result.Status);
+	}
+
+	[Fact]
 	public async Task NonFinancial_UndecodableBody_IsUnknown()
 	{
 		// (I2/F6) The non-financial POST answered 200 but its body cannot be decoded — no polling URL, outcome

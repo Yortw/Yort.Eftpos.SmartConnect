@@ -320,6 +320,20 @@ public sealed class SmartConnectClient : IDisposable
 				};
 			}
 
+			if (!IsUsablePollingUrl(initial.PollingUrl!))
+			{
+				// 200, but the polling URL is not a usable absolute http(s) URL — sending to it would throw
+				// from HttpClient mid-loop. Epistemically the same as no URL: the transaction may be live, so
+				// Unknown with the sentinel left pending; PollingUrlInvalid names the specific cause.
+				SafeLog(LogLevel.Error, null, "SmartConnect accepted the transaction POST for {ClientTransactionRef} but returned an unusable polling URL — outcome is UNKNOWN; recovery must investigate.", request.ClientTransactionRef);
+				return new SmartConnectTransactionResult
+				{
+					Status = SmartConnectTransactionStatus.Unknown,
+					FailureCause = SmartConnectFailureCause.PollingUrlInvalid,
+					TransactionId = initial.TransactionId
+				};
+			}
+
 			// (F2) transactionId ONLY — the URL carries the merchantAccessToken and is never logged.
 			SafeLog(LogLevel.Information, null, "Polling URL received for {ClientTransactionRef} (transactionId {TransactionId}).", request.ClientTransactionRef, initial.TransactionId);
 
@@ -345,8 +359,9 @@ public sealed class SmartConnectClient : IDisposable
 	/// a transaction's outcome. Jumps straight to the poll loop: the sentinel already exists from before the
 	/// crash, so neither <c>SaveTransactionAttemptAsync</c> nor <c>UpdatePollingDetailsAsync</c> is called;
 	/// <c>UpdateCompletedAsync</c> IS called when a terminal state is reached. Never throws for runtime
-	/// conditions — an expired URL surfaces as <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>,
-	/// meaning the outcome can no longer be determined programmatically: resolve it by manual reconciliation.
+	/// conditions — an expired OR malformed URL (present but not an absolute http(s) URI) surfaces as
+	/// <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>, meaning the outcome can no longer be determined
+	/// programmatically: resolve it by manual reconciliation. Only a null/blank URL throws (a missing argument).
 	/// </summary>
 	/// <param name="pollingUrl">The persisted polling URL (carries the access token — handle accordingly).</param>
 	/// <param name="clientTransactionRef">The reference the transaction's state is persisted under.</param>
@@ -389,6 +404,21 @@ public sealed class SmartConnectClient : IDisposable
 		}
 
 		ThrowIfDisposed();
+
+		if (!IsUsablePollingUrl(pollingUrl))
+		{
+			// The URL a caller passes here is typically a persisted copy of an earlier service-supplied value,
+			// so a present-but-unusable one (relative, or a non-http scheme) is a runtime/data condition, not a
+			// caller bug — resolve it like the poll-verdict path (Unknown/PollingUrlInvalid, manual reconcile),
+			// never a throw. Only a null/blank URL (handled above) is a genuine missing-argument error. The
+			// pre-crash sentinel is left untouched (pending).
+			SafeLog(LogLevel.Error, null, "The polling URL supplied to ResumePollingAsync for {ClientTransactionRef} is not a usable absolute http(s) URL — outcome UNKNOWN; manual reconciliation required.", clientTransactionRef);
+			return Task.FromResult(new SmartConnectTransactionResult
+			{
+				Status = SmartConnectTransactionStatus.Unknown,
+				FailureCause = SmartConnectFailureCause.PollingUrlInvalid
+			});
+		}
 
 		return PollForResultAsync(pollingUrl, null, clientTransactionRef, progress);
 	}
@@ -649,6 +679,17 @@ public sealed class SmartConnectClient : IDisposable
 				};
 			}
 
+			if (!IsUsablePollingUrl(initial.PollingUrl!))
+			{
+				SafeLog(LogLevel.Error, null, "SmartConnect accepted the {TransactionType} request but returned an unusable polling URL — the result cannot be retrieved.", transactionType);
+				return new SmartConnectTransactionResult
+				{
+					Status = SmartConnectTransactionStatus.Unknown,
+					FailureCause = SmartConnectFailureCause.PollingUrlInvalid,
+					TransactionId = initial.TransactionId
+				};
+			}
+
 			// Null ref = no state-store interaction at any point, including terminal state.
 			return await PollForResultAsync(initial.PollingUrl!, initial.TransactionId, null, progress).ConfigureAwait(false);
 		}
@@ -888,6 +929,15 @@ public sealed class SmartConnectClient : IDisposable
 		{
 			SafeLog(LogLevel.Warning, null, "A progress report callback threw ({ExceptionType}) — suppressed; it has no bearing on the transaction outcome.", ex.GetType().Name);
 		}
+	}
+
+	// A usable polling URL is an absolute http(s) URI. Uri.TryCreate(..., Absolute) alone is not enough — it
+	// accepts foo:bar / file:///x / mailto:, which HttpClient then throws on (or, worse, dispatches) mid-poll;
+	// the scheme check keeps an unusable URL on the graceful PollingUrlInvalid path instead of a raw throw.
+	private static bool IsUsablePollingUrl(string url)
+	{
+		return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+			&& (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 	}
 
 	private static bool IsPollingUrlVerdict(HttpStatusCode statusCode)

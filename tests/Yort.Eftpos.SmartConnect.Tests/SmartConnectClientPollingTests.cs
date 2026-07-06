@@ -378,6 +378,26 @@ public class SmartConnectClientPollingTests
 		Assert.Null(store.Records[Ref].Status);
 	}
 
+	[Theory]
+	[InlineData("relative/path")]
+	[InlineData("foo:bar")]
+	public async Task Post_UnusablePollingUrlInBody_IsUnknownPollingUrlInvalid_SentinelPending(string badUrl)
+	{
+		// (M3/F1) The POST answered 200 but the polling URL it returned is not a usable absolute http(s) URL —
+		// sending to it would throw from HttpClient mid-loop. Map to Unknown/PollingUrlInvalid with the
+		// sentinel left pending (like the no-URL and poll-verdict paths), never a raw throw.
+		var store = new InMemoryTransactionStateStore();
+		var badInitial = "{\"transactionId\": \"txn-1\", \"transactionStatus\": \"PENDING\", \"data\": {\"PollingUrl\": \"" + badUrl + "\"}}";
+		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, badInitial)));
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+		Assert.Equal(SmartConnectFailureCause.PollingUrlInvalid, result.FailureCause);
+		Assert.Null(store.Records[Ref].Status);
+	}
+
 	[Fact]
 	public async Task Poll_ProgressSinkThrows_SwallowedAndPollingContinues()
 	{
