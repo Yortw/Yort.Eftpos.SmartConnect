@@ -422,6 +422,73 @@ public class SmartConnectClientPollingTests
 	}
 
 	[Fact]
+	public async Task Poll_GarbledJsonBody_TreatedAsTransient_Recovers()
+	{
+		// (T1) A 200 poll whose JSON body is garbled (a proxy blip) is transient — report NetworkError, keep
+		// polling, recover on the next valid answer. Pins the client-level catch(JsonException) that upholds
+		// the never-throws contract: the parser throws on bad JSON, the loop must absorb it.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(
+			() => Json(HttpStatusCode.OK, "{ this is not valid json"),
+			() => Json(HttpStatusCode.OK, AcceptedPollJson));
+		var progress = new RecordingProgress();
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest(), progress);
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Contains(progress.Reports, r => r.State == SmartConnectPollingState.NetworkError);
+	}
+
+	[Fact]
+	public async Task Poll_PersistentGarbledJson_TimesOutUnknown()
+	{
+		// (T1) A body that never parses must not spin forever — it exhausts MaxPollDuration to Unknown.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(() => Json(HttpStatusCode.OK, "{ garbled"));
+		using var client = CreateClient(handler, store, maxPollDuration: TimeSpan.FromSeconds(10));
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+	}
+
+	[Fact]
+	public async Task Poll_Http5xxResponse_TreatedAsTransient_Recovers()
+	{
+		// (T2) A poll GET returning HTTP 500 is a transient server blip — distinct from the 401/403/404/410
+		// URL-verdict codes and from 429 — so report NetworkError, keep polling, recover on the next answer.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(
+			() => new HttpResponseMessage(HttpStatusCode.InternalServerError),
+			() => Json(HttpStatusCode.OK, AcceptedPollJson));
+		var progress = new RecordingProgress();
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest(), progress);
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Contains(progress.Reports, r => r.State == SmartConnectPollingState.NetworkError);
+	}
+
+	[Theory]
+	[InlineData(HttpStatusCode.InternalServerError)]
+	[InlineData(HttpStatusCode.BadGateway)]
+	[InlineData(HttpStatusCode.ServiceUnavailable)]
+	public async Task Poll_PersistentHttp5xx_TimesOutUnknown(HttpStatusCode status)
+	{
+		// (T2) A poll phase that only ever gets 5xx exhausts to Unknown — never Failed (the outcome is
+		// unprovable) and never a URL-verdict stop.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(() => new HttpResponseMessage(status));
+		using var client = CreateClient(handler, store, maxPollDuration: TimeSpan.FromSeconds(10));
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+	}
+
+	[Fact]
 	public async Task Poll_NullProgress_DoesNotThrow()
 	{
 		var store = new InMemoryTransactionStateStore();
