@@ -722,6 +722,9 @@ public sealed class SmartConnectClient : IDisposable
 		if (inner.Status == SmartConnectTransactionStatus.Unknown)
 		{
 			status = SmartConnectOperationStatus.Unknown;
+			// Carry any service/intermediary message (e.g. a 5xx body) so the operation shape is as diagnosable
+			// as the transaction shape; null when there was none (poll timeout, dispose).
+			error = inner.ErrorMessage;
 		}
 		else if (inner.FailureCause == SmartConnectFailureCause.ServiceError)
 		{

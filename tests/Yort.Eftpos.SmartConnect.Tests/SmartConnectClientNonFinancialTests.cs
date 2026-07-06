@@ -341,6 +341,9 @@ public class SmartConnectClientNonFinancialTests
 		Assert.Equal(SmartConnectFailureCause.TransportUnknown, cutoverResult.FailureCause);
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, journalResult.Status);
 		Assert.Equal(SmartConnectFailureCause.TransportUnknown, journalResult.FailureCause);
+		// The intermediary's message is surfaced on both shapes, not dropped.
+		Assert.Equal("upstream", operationResult.ErrorMessage);
+		Assert.Equal("upstream", cutoverResult.ErrorMessage);
 	}
 
 	[Fact]
