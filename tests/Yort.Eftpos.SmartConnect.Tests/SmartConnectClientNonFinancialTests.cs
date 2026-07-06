@@ -430,6 +430,20 @@ public class SmartConnectClientNonFinancialTests
 	}
 
 	[Fact]
+	public async Task NonFinancial_BlankField_ArgumentExceptionNamesRegistration()
+	{
+		// (M4) The thrown ArgumentException must name the actual parameter (registration), not a hardcoded
+		// "request" that does not exist on these methods.
+		using var client = CreateClient(HappyHandler());
+		var blank = CreateRegistration();
+		blank.POSVendorName = string.Empty;
+
+		var ex = await Assert.ThrowsAsync<ArgumentException>(() => client.GetTerminalStatusAsync(blank));
+
+		Assert.Equal("registration", ex.ParamName);
+	}
+
+	[Fact]
 	public async Task NonFinancial_AfterDispose_Throws()
 	{
 		var client = CreateClient(HappyHandler());

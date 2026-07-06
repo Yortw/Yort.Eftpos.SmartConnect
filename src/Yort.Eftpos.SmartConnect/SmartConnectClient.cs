@@ -110,9 +110,9 @@ public sealed class SmartConnectClient : IDisposable
 			throw new ArgumentNullException(nameof(request));
 		}
 
-		RequireField(request.POSRegisterID, nameof(request.POSRegisterID));
-		RequireField(request.POSBusinessName, nameof(request.POSBusinessName));
-		RequireField(request.POSVendorName, nameof(request.POSVendorName));
+		RequireField(request.POSRegisterID, nameof(request.POSRegisterID), nameof(request));
+		RequireField(request.POSBusinessName, nameof(request.POSBusinessName), nameof(request));
+		RequireField(request.POSVendorName, nameof(request.POSVendorName), nameof(request));
 		ThrowIfDisposed();
 
 		var fields = new List<KeyValuePair<string, string?>>(4)
@@ -602,9 +602,9 @@ public sealed class SmartConnectClient : IDisposable
 			throw new ArgumentNullException(nameof(registration));
 		}
 
-		RequireField(registration.POSRegisterID, nameof(registration.POSRegisterID));
-		RequireField(registration.POSBusinessName, nameof(registration.POSBusinessName));
-		RequireField(registration.POSVendorName, nameof(registration.POSVendorName));
+		RequireField(registration.POSRegisterID, nameof(registration.POSRegisterID), nameof(registration));
+		RequireField(registration.POSBusinessName, nameof(registration.POSBusinessName), nameof(registration));
+		RequireField(registration.POSVendorName, nameof(registration.POSVendorName), nameof(registration));
 		ThrowIfDisposed();
 
 		SafeLog(LogLevel.Information, null, "Sending {TransactionType} (non-financial operation).", transactionType);
@@ -1034,11 +1034,11 @@ public sealed class SmartConnectClient : IDisposable
 			throw new ArgumentNullException(nameof(request));
 		}
 
-		RequireField(request.ClientTransactionRef, nameof(request.ClientTransactionRef));
-		RequireField(request.POSRegisterID, nameof(request.POSRegisterID));
-		RequireField(request.POSBusinessName, nameof(request.POSBusinessName));
-		RequireField(request.POSVendorName, nameof(request.POSVendorName));
-		RequireField(request.TransactionType, nameof(request.TransactionType));
+		RequireField(request.ClientTransactionRef, nameof(request.ClientTransactionRef), nameof(request));
+		RequireField(request.POSRegisterID, nameof(request.POSRegisterID), nameof(request));
+		RequireField(request.POSBusinessName, nameof(request.POSBusinessName), nameof(request));
+		RequireField(request.POSVendorName, nameof(request.POSVendorName), nameof(request));
+		RequireField(request.TransactionType, nameof(request.TransactionType), nameof(request));
 
 		if (request.AmountTotal.ToCents() <= 0)
 		{
@@ -1283,11 +1283,11 @@ public sealed class SmartConnectClient : IDisposable
 		return null;
 	}
 
-	private static void RequireField(string? value, string fieldName)
+	private static void RequireField(string? value, string fieldName, string paramName)
 	{
 		if (string.IsNullOrWhiteSpace(value))
 		{
-			throw new ArgumentException($"{fieldName} is mandatory — it must match across pairing and all subsequent transactions.", "request");
+			throw new ArgumentException($"{fieldName} is mandatory — it must match across pairing and all subsequent transactions.", paramName);
 		}
 	}
 

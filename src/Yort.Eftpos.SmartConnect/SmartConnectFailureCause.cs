@@ -6,7 +6,10 @@ namespace Yort.Eftpos.SmartConnect;
 /// </summary>
 public enum SmartConnectFailureCause
 {
-	/// <summary>No failure-cause detail — the transaction has a normal outcome (including Declined).</summary>
+	/// <summary>No failure-cause detail. Carried by a normal outcome (including Declined), and also by an
+	/// <see cref="SmartConnectTransactionStatus.Unknown"/> produced by poll-budget exhaustion or client
+	/// dispose — there is no dedicated cause for those, so branch on
+	/// <see cref="SmartConnectTransactionStatus"/> first and treat an Unknown as "reconcile", never success.</summary>
 	None = 0,
 
 	/// <summary>SmartConnect answered with a 4xx verdict that the request was not processed (e.g. HTTP 400). Fix the request/configuration; blind retry will fail again. A 5xx/408 answer is NOT this — it maps to <see cref="TransportUnknown"/>, because an intermediary can generate it after the service received the request.</summary>
