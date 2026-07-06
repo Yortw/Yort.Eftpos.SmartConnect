@@ -773,6 +773,15 @@ public sealed class SmartConnectClient : IDisposable
 				};
 			}
 
+			// Clamp the wait to the remaining budget: Validate permits BackoffCap (and thus a Retry-After) larger
+			// than MaxPollDuration, and without this a single backoff could wait far past the deadline. The
+			// loop-entry check above guarantees remaining > 0 here; a final poll still lands right at the deadline.
+			var remaining = deadline - Clock();
+			if (remaining < nextDelay)
+			{
+				nextDelay = remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+			}
+
 			await PollDelay(nextDelay).ConfigureAwait(false);
 			nextDelay = _pollInterval;
 			attempt++;

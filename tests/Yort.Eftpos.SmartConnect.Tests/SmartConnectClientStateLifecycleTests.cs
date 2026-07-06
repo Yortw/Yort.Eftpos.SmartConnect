@@ -333,7 +333,9 @@ public class SmartConnectClientStateLifecycleTests
 		var store = new InMemoryTransactionStateStore();
 		var config = CreateConfiguration(PendingResponseHandler(), store);
 		config.PollInterval = TimeSpan.FromSeconds(3);
-		config.MaxPollDuration = TimeSpan.FromSeconds(7); // room for at least two poll delays before timeout
+		// A clean multiple of the interval (three 3s polls) so the deadline clamp never shortens the final
+		// delay — this test is about the cadence captured at construction, not the backoff-vs-deadline clamp.
+		config.MaxPollDuration = TimeSpan.FromSeconds(9);
 		using var client = new SmartConnectClient(config);
 
 		var delays = new List<TimeSpan>();
