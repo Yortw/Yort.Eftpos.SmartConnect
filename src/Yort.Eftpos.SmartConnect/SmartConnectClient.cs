@@ -143,9 +143,7 @@ public sealed class SmartConnectClient : IDisposable
 						return new SmartConnectPairingResult { Success = true };
 					}
 
-					var body = response.Content == null
-						? string.Empty
-						: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+					var body = await ReadBodySafelyAsync(response).ConfigureAwait(false);
 
 					var errorMessage = GetErrorMessage(response, body);
 					// Pairing was the one operation that logged on no failure path, so a terse service error
@@ -262,9 +260,7 @@ public sealed class SmartConnectClient : IDisposable
 	{
 		using (response)
 		{
-			var body = response.Content == null
-				? string.Empty
-				: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+			var body = await ReadBodySafelyAsync(response).ConfigureAwait(false);
 
 			if (!response.IsSuccessStatusCode)
 			{
@@ -600,9 +596,7 @@ public sealed class SmartConnectClient : IDisposable
 
 		using (response)
 		{
-			var body = response.Content == null
-				? string.Empty
-				: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+			var body = await ReadBodySafelyAsync(response).ConfigureAwait(false);
 
 			if (!response.IsSuccessStatusCode)
 			{
@@ -810,9 +804,7 @@ public sealed class SmartConnectClient : IDisposable
 						continue;
 					}
 
-					var body = response.Content == null
-						? string.Empty
-						: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+					var body = await ReadBodySafelyAsync(response).ConfigureAwait(false);
 
 					PollResult poll;
 					try
@@ -1073,9 +1065,10 @@ public sealed class SmartConnectClient : IDisposable
 		try
 		{
 			// The default HttpCompletionOption.ResponseContentRead buffers the body during this call, so
-			// mid-body network failures surface inside this wrap; later ReadAsStringAsync calls read from
-			// the buffer and cannot fail on network. Do not change the completion option without
-			// revisiting that assumption.
+			// mid-body NETWORK failures surface inside this wrap; later reads work off the buffer and cannot
+			// fail on network. They can still fail on DECODE (a bad charset turning bytes into a string) —
+			// that is handled separately by ReadBodySafelyAsync, not here. Do not change the completion option
+			// without revisiting the network assumption.
 			return await _httpClient.SendAsync(request).ConfigureAwait(false);
 		}
 		catch (ObjectDisposedException ex)
@@ -1089,6 +1082,31 @@ public sealed class SmartConnectClient : IDisposable
 		catch (Exception ex) when (TransportFailureClassifier.IsTransportFailure(ex))
 		{
 			throw new SmartConnectTransportException(TransportFailureClassifier.Classify(ex), ex);
+		}
+	}
+
+	// Reads a buffered response body, treating an UNDECODABLE body the same as an empty one — never a thrown
+	// exception. The transport wrap (SendAsync) already surfaced any NETWORK failure; this guards the separate
+	// DECODE step HttpContent performs when turning bytes into a string, which throws InvalidOperationException
+	// for a charset the runtime cannot resolve (on net48 even a quoted charset) — exactly the sloppy headers an
+	// intermediary error page tends to carry. An empty body then routes through the existing no-polling-URL /
+	// garbled-body handling (Unknown on the POST, retry on the poll). Diagnostic-only: logging is best-effort.
+	private async Task<string> ReadBodySafelyAsync(HttpResponseMessage response)
+	{
+		if (response.Content == null)
+		{
+			return string.Empty;
+		}
+
+		try
+		{
+			return await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+		}
+		catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException)
+		{
+			// (G7) The exception message can echo the charset/headers — log the TYPE only, never the message.
+			SafeLog(LogLevel.Warning, null, "Response body could not be decoded ({ExceptionType}) — treating it as empty; the outcome resolves to unknown/retryable downstream.", ex.GetType().Name);
+			return string.Empty;
 		}
 	}
 

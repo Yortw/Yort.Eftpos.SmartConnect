@@ -52,6 +52,15 @@ public class SmartConnectClientPollingTests
 	private static HttpResponseMessage Json(HttpStatusCode status, string json)
 		=> new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
+	// A 200 response whose Content-Type declares a charset the runtime cannot resolve — ReadAsStringAsync
+	// throws InvalidOperationException on decode (an intermediary error page is the likely real-world source).
+	private static HttpResponseMessage BadCharset(string json)
+	{
+		var content = new StringContent(json, Encoding.UTF8, "application/json");
+		content.Headers.ContentType!.CharSet = "foo-bar";
+		return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+	}
+
 	/// <summary>First call gets the initial POST response; later calls walk the poll sequence (last repeats).</summary>
 	private static MockHttpHandler SequencedHandler(params Func<HttpResponseMessage>[] pollResponses)
 	{
@@ -317,6 +326,45 @@ public class SmartConnectClientPollingTests
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		Assert.NotEqual(SmartConnectFailureCause.StateStoreFailure, result.FailureCause);
 		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+	}
+
+	[Fact]
+	public async Task Poll_UndecodableBody_TreatedAsTransient_Recovers()
+	{
+		// (I2) A poll response whose body cannot be decoded (bad charset) is a transient blip, not a fatal
+		// error — treat it like a garbled body: report NetworkError, keep polling, and recover on the next
+		// answer. The decode failure is logged (F7) so it is diagnosable.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(
+			() => BadCharset(PendingPollJson),
+			() => Json(HttpStatusCode.OK, AcceptedPollJson));
+		var progress = new RecordingProgress();
+		var logger = new ListLogger();
+		using var client = CreateClient(handler, store, logger);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest(), progress);
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Contains(progress.Reports, r => r.State == SmartConnectPollingState.NetworkError);
+		var decodeWarning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("decode", StringComparison.OrdinalIgnoreCase));
+		Assert.Contains(decodeWarning.State, p => p.Key == "ExceptionType" && (string?)p.Value == nameof(InvalidOperationException));
+	}
+
+	[Fact]
+	public async Task Post_UndecodableBody_IsUnknownAndLeavesSentinelPending()
+	{
+		// (I2) The POST answered 200 but its body cannot be decoded, so no polling URL can be read — the
+		// transaction may be live on the pinpad. Unknown, sentinel pending (routes through the existing
+		// no-polling-URL branch), never a thrown decode exception.
+		var store = new InMemoryTransactionStateStore();
+		var handler = new MockHttpHandler(_ => Task.FromResult(BadCharset(InitialResponseJson)));
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+		Assert.Equal(SmartConnectFailureCause.TransportUnknown, result.FailureCause);
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Fact]

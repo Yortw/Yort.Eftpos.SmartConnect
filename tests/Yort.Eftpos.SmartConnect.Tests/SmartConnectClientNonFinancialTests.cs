@@ -53,6 +53,14 @@ public class SmartConnectClientNonFinancialTests
 	private static HttpResponseMessage Json(HttpStatusCode status, string json)
 		=> new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
+	// A 200 whose Content-Type declares an unresolvable charset — ReadAsStringAsync throws on decode.
+	private static HttpResponseMessage BadCharset(string json)
+	{
+		var content = new StringContent(json, Encoding.UTF8, "application/json");
+		content.Headers.ContentType!.CharSet = "foo-bar";
+		return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+	}
+
 	/// <summary>First request gets the initial POST response; later requests get <paramref name="completedPollJson"/>.</summary>
 	private static MockHttpHandler Handler(string completedPollJson)
 	{
@@ -333,6 +341,19 @@ public class SmartConnectClientNonFinancialTests
 		Assert.Equal(SmartConnectFailureCause.TransportUnknown, cutoverResult.FailureCause);
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, journalResult.Status);
 		Assert.Equal(SmartConnectFailureCause.TransportUnknown, journalResult.FailureCause);
+	}
+
+	[Fact]
+	public async Task NonFinancial_UndecodableBody_IsUnknown()
+	{
+		// (I2/F6) The non-financial POST answered 200 but its body cannot be decoded — no polling URL, outcome
+		// unprovable → operation Unknown, no thrown decode exception, no store interaction.
+		var handler = new MockHttpHandler(_ => Task.FromResult(BadCharset(InitialResponseJson)));
+		using var client = CreateClient(handler);
+
+		var result = await client.GetTerminalStatusAsync(CreateRegistration());
+
+		Assert.Equal(SmartConnectOperationStatus.Unknown, result.Status);
 	}
 
 	[Fact]

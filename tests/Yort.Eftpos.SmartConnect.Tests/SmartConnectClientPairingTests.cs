@@ -187,6 +187,25 @@ public class SmartConnectClientPairingTests
 	}
 
 	[Fact]
+	public async Task PairAsync_HttpErrorWithUndecodableBody_FailsGracefully()
+	{
+		// (I2/F6) A rejected pairing whose body cannot be decoded (bad charset from an intermediary) must
+		// surface as a failed result with a status-derived message, never a raw InvalidOperationException.
+		var handler = new MockHttpHandler(_ =>
+		{
+			var content = new StringContent("whatever", Encoding.UTF8, "application/json");
+			content.Headers.ContentType!.CharSet = "foo-bar";
+			return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = content });
+		});
+		using var client = new SmartConnectClient(CreateConfiguration(handler));
+
+		var result = await client.PairAsync("12345678", CreatePairingRequest());
+
+		Assert.False(result.Success);
+		Assert.False(string.IsNullOrEmpty(result.ErrorMessage));
+	}
+
+	[Fact]
 	public async Task PairAsync_TransportFailure_ThrowsSmartConnectTransportException()
 	{
 		// Pairing is one-shot, not polled — transport failures propagate, but always as the library's
