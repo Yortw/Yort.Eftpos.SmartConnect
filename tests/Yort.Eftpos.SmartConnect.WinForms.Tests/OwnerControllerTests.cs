@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows.Forms;
 using Xunit;
 using Yort.Eftpos.SmartConnect.WinForms;
@@ -67,6 +68,26 @@ public class OwnerControllerTests
 		a.Restore();            // last disabler releases: now re-enable
 		Assert.Equal(2, calls.Count);
 		Assert.Equal((new IntPtr(42), true), calls[1]);
+	}
+
+	[Fact]
+	public void DistinctOwnersWithTheSameHandleValue_AreCountedIndependently()
+	{
+		// The depth is keyed on the owner OBJECT, not its HWND value (which Windows reuses). Two *different*
+		// owner windows that happen to report the same handle must each be disabled and restored on their own
+		// — never deduped by a shared handle value, or a leaked count from one owner could silently skip
+		// disabling a later, unrelated owner mid-transaction. Both FakeWindows report handle 42.
+		var calls = new List<(IntPtr handle, bool enabled)>();
+		var a = new OwnerController(new FakeWindow(), disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
+		var b = new OwnerController(new FakeWindow(), disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
+
+		a.Disable();
+		b.Disable();
+		Assert.Equal(2, calls.Count(c => !c.enabled));   // both disabled, not deduped by handle value
+
+		a.Restore();
+		b.Restore();
+		Assert.Equal(2, calls.Count(c => c.enabled));     // both re-enabled independently
 	}
 
 	[Fact]
