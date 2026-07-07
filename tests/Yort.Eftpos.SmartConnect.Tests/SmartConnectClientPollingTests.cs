@@ -340,15 +340,14 @@ public class SmartConnectClientPollingTests
 	}
 
 	[Fact]
-	public async Task Poll_UndecodableBody_TreatedAsTransient_Recovers()
+	public async Task Poll_BadCharsetHeader_RecoversBodyFromUtf8Bytes()
 	{
-		// (I2) A poll response whose body cannot be decoded (bad charset) is a transient blip, not a fatal
-		// error — treat it like a garbled body: report NetworkError, keep polling, and recover on the next
-		// answer. The decode failure is logged (F7) so it is diagnosable.
+		// (I2) A poll response whose DECLARED charset is unusable but whose bytes are valid UTF-8 (a lying
+		// intermediary header) is recovered from the raw bytes and parsed normally, not discarded — so the
+		// single bad-charset poll completes the transaction instead of spinning to a false Unknown. The
+		// recovery is logged (F7). No NetworkError: the body parsed on the first read.
 		var store = new InMemoryTransactionStateStore();
-		var handler = SequencedHandler(
-			() => BadCharset(PendingPollJson),
-			() => Json(HttpStatusCode.OK, AcceptedPollJson));
+		var handler = SequencedHandler(() => BadCharset(AcceptedPollJson));
 		var progress = new RecordingProgress();
 		var logger = new ListLogger();
 		using var client = CreateClient(handler, store, logger);
@@ -356,26 +355,34 @@ public class SmartConnectClientPollingTests
 		var result = await client.ProcessTransactionAsync(CreateRequest(), progress);
 
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
-		Assert.Contains(progress.Reports, r => r.State == SmartConnectPollingState.NetworkError);
-		var decodeWarning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("decode", StringComparison.OrdinalIgnoreCase));
+		Assert.DoesNotContain(progress.Reports, r => r.State == SmartConnectPollingState.NetworkError);
+		var decodeWarning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("UTF-8", StringComparison.OrdinalIgnoreCase));
 		Assert.Contains(decodeWarning.State, p => p.Key == "ExceptionType" && (string?)p.Value == nameof(InvalidOperationException));
 	}
 
 	[Fact]
-	public async Task Post_UndecodableBody_IsUnknownAndLeavesSentinelPending()
+	public async Task Post_BadCharsetHeader_RecoversPollingUrlAndPolls()
 	{
-		// (I2) The POST answered 200 but its body cannot be decoded, so no polling URL can be read — the
-		// transaction may be live on the pinpad. Unknown, sentinel pending (routes through the existing
-		// no-polling-URL branch), never a thrown decode exception.
+		// (I2) The POST answered 200 with an unusable charset header but a valid UTF-8 body — the polling URL
+		// is recovered from the bytes and the transaction polls to its real outcome, not a false Unknown.
 		var store = new InMemoryTransactionStateStore();
-		var handler = new MockHttpHandler(_ => Task.FromResult(BadCharset(InitialResponseJson)));
+		var first = true;
+		var handler = new MockHttpHandler(_ =>
+		{
+			if (first)
+			{
+				first = false;
+				return Task.FromResult(BadCharset(InitialResponseJson));
+			}
+
+			return Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson));
+		});
 		using var client = CreateClient(handler, store);
 
 		var result = await client.ProcessTransactionAsync(CreateRequest());
 
-		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
-		Assert.Equal(SmartConnectFailureCause.TransportUnknown, result.FailureCause);
-		Assert.Null(store.Records[Ref].Status);
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Contains("UpdateCompleted:" + Ref + ":Accepted", store.CallLog);
 	}
 
 	[Theory]

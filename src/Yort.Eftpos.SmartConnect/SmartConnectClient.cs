@@ -1176,12 +1176,15 @@ public sealed class SmartConnectClient : IDisposable
 		}
 	}
 
-	// Reads a buffered response body, treating an UNDECODABLE body the same as an empty one — never a thrown
-	// exception. The transport wrap (SendAsync) already surfaced any NETWORK failure; this guards the separate
-	// DECODE step HttpContent performs when turning bytes into a string, which throws InvalidOperationException
-	// for a charset the runtime cannot resolve (on net48 even a quoted charset) — exactly the sloppy headers an
-	// intermediary error page tends to carry. An empty body then routes through the existing no-polling-URL /
-	// garbled-body handling (Unknown on the POST, retry on the poll). Diagnostic-only: logging is best-effort.
+	// Reads a buffered response body without ever throwing. The transport wrap (SendAsync) already surfaced any
+	// NETWORK failure; this guards the separate DECODE step HttpContent performs when turning bytes into a
+	// string, which throws InvalidOperationException for a charset the runtime cannot resolve (on net48 even a
+	// quoted charset) — exactly the sloppy headers an intermediary tends to carry. SmartConnect speaks UTF-8, so
+	// when the declared charset is unusable we recover the body from the raw bytes as UTF-8 rather than discard
+	// it: a valid response whose header merely lies is then parsed normally instead of becoming a false Unknown.
+	// UTF-8 decoding here is permissive (replacement chars, never throws); a body that is still not valid JSON
+	// falls through the existing garbled-body handling (Unknown on the POST, retry on the poll). If even reading
+	// the bytes fails, an empty body routes the same way. Diagnostic-only: logging is best-effort.
 	private async Task<string> ReadBodySafelyAsync(HttpResponseMessage response)
 	{
 		if (response.Content == null)
@@ -1195,9 +1198,18 @@ public sealed class SmartConnectClient : IDisposable
 		}
 		catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException)
 		{
-			// (G7) The exception message can echo the charset/headers — log the TYPE only, never the message.
-			SafeLog(LogLevel.Warning, null, "Response body could not be decoded ({ExceptionType}) — treating it as empty; the outcome resolves to unknown/retryable downstream.", ex.GetType().Name);
-			return string.Empty;
+			try
+			{
+				var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+				// (G7) The decode exception message can echo the charset/headers — log the TYPE only.
+				SafeLog(LogLevel.Warning, null, "Response body declared an unusable charset ({ExceptionType}) — recovered by decoding the raw bytes as UTF-8.", ex.GetType().Name);
+				return Encoding.UTF8.GetString(bytes);
+			}
+			catch (Exception inner)
+			{
+				SafeLog(LogLevel.Warning, null, "Response body could not be read ({ExceptionType}) — treating it as empty; the outcome resolves to unknown/retryable downstream.", inner.GetType().Name);
+				return string.Empty;
+			}
 		}
 	}
 

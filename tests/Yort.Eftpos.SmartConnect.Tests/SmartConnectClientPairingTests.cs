@@ -187,13 +187,13 @@ public class SmartConnectClientPairingTests
 	}
 
 	[Fact]
-	public async Task PairAsync_HttpErrorWithUndecodableBody_FailsGracefully()
+	public async Task PairAsync_HttpErrorWithBadCharsetHeader_RecoversBodyAsMessage()
 	{
-		// (I2/F6) A rejected pairing whose body cannot be decoded (bad charset from an intermediary) must
-		// surface as a failed result with a status-derived message, never a raw InvalidOperationException.
+		// (I2/F6) A rejected pairing whose declared charset is unusable but whose bytes are valid UTF-8 must
+		// recover the body and surface it as the failure message, never a raw InvalidOperationException.
 		var handler = new MockHttpHandler(_ =>
 		{
-			var content = new StringContent("whatever", Encoding.UTF8, "application/json");
+			var content = new StringContent("register already paired", Encoding.UTF8, "application/json");
 			content.Headers.ContentType!.CharSet = "foo-bar";
 			return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = content });
 		});
@@ -202,7 +202,7 @@ public class SmartConnectClientPairingTests
 		var result = await client.PairAsync("12345678", CreatePairingRequest());
 
 		Assert.False(result.Success);
-		Assert.False(string.IsNullOrEmpty(result.ErrorMessage));
+		Assert.Equal("register already paired", result.ErrorMessage);
 	}
 
 	[Fact]

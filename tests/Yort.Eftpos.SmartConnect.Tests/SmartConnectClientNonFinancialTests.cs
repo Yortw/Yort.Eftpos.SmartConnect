@@ -361,16 +361,26 @@ public class SmartConnectClientNonFinancialTests
 	}
 
 	[Fact]
-	public async Task NonFinancial_UndecodableBody_IsUnknown()
+	public async Task NonFinancial_BadCharsetHeader_RecoversAndCompletes()
 	{
-		// (I2/F6) The non-financial POST answered 200 but its body cannot be decoded — no polling URL, outcome
-		// unprovable → operation Unknown, no thrown decode exception, no store interaction.
-		var handler = new MockHttpHandler(_ => Task.FromResult(BadCharset(InitialResponseJson)));
+		// (I2/F6) The non-financial POST's unusable charset header is recovered from the UTF-8 bytes — the
+		// polling URL is read and the operation polls to its real outcome instead of a false Unknown.
+		var first = true;
+		var handler = new MockHttpHandler(_ =>
+		{
+			if (first)
+			{
+				first = false;
+				return Task.FromResult(BadCharset(InitialResponseJson));
+			}
+
+			return Task.FromResult(Json(HttpStatusCode.OK, OperationOkPollJson));
+		});
 		using var client = CreateClient(handler);
 
 		var result = await client.GetTerminalStatusAsync(CreateRegistration());
 
-		Assert.Equal(SmartConnectOperationStatus.Unknown, result.Status);
+		Assert.Equal(SmartConnectOperationStatus.Succeeded, result.Status);
 	}
 
 	[Fact]
