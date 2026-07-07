@@ -298,6 +298,14 @@ one. That mapping is unsafe for intermediary-generated statuses, so the POST res
   and this decision's own rationale applies: a false `Unknown` costs one manual reconciliation; a false
   `Failed` ("blind retry will fail again") invites a re-tender over a possibly-live charge.
 
+Extended 2026-07-07 — the same split now applies to the **non-financial** POST path (`LogonAsync`,
+settlement inquiry/cutover, terminal status, journal, `ExecuteNonFinancialAsync`), which had also read every
+non-2xx as a rejection. A 5xx/408 there maps through to the operation result's `Unknown`; a 4xx maps to
+`Failed` and surfaces the service's error text. This matters most for the **state-changing settlement
+cutover**: a 5xx after the service received the request must be `Unknown` (the cutover may have executed),
+never `Failed` (which would invite a blind re-cutover). The non-financial path holds no sentinel, so there is
+nothing to leave pending — the caller owns reconciliation of the `Unknown`.
+
 The poll loop is unaffected (it already treated 5xx as transient and re-polled — it still holds a
 polling URL, so it *can* re-ask; the POST path cannot).
 
