@@ -72,6 +72,17 @@ public class SmartConnectClientPollingTests
 		return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
 	}
 
+#if NET48
+	// A 200 whose charset is a QUOTED token (charset="utf-8"). net48's HttpContent throws on this; modern .NET
+	// accepts it — so this case only exists on the net48 leg.
+	private static HttpResponseMessage QuotedCharset(string json)
+	{
+		var content = new StringContent(json, Encoding.UTF8, "application/json");
+		content.Headers.ContentType!.CharSet = "\"utf-8\"";
+		return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+	}
+#endif
+
 	/// <summary>First call gets the initial POST response; later calls walk the poll sequence (last repeats).</summary>
 	private static MockHttpHandler SequencedHandler(params Func<HttpResponseMessage>[] pollResponses)
 	{
@@ -356,9 +367,28 @@ public class SmartConnectClientPollingTests
 
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		Assert.DoesNotContain(progress.Reports, r => r.State == SmartConnectPollingState.NetworkError);
-		var decodeWarning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("UTF-8", StringComparison.OrdinalIgnoreCase));
+		var decodeWarning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.IndexOf("UTF-8", StringComparison.OrdinalIgnoreCase) >= 0);
 		Assert.Contains(decodeWarning.State, p => p.Key == "ExceptionType" && (string?)p.Value == nameof(InvalidOperationException));
 	}
+
+#if NET48
+	[Fact]
+	public async Task Poll_QuotedCharsetHeader_RecoversOnNet48()
+	{
+		// net48-only: HttpContent.ReadAsStringAsync throws on a QUOTED charset (charset="utf-8"), which modern
+		// .NET accepts — a divergence the net8 leg cannot reach. The byte-fallback recovers the body; asserting
+		// the recovery Warning fires also confirms the net48 decode actually threw (otherwise there'd be none).
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(() => QuotedCharset(AcceptedPollJson));
+		var logger = new ListLogger();
+		using var client = CreateClient(handler, store, logger);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.IndexOf("UTF-8", StringComparison.OrdinalIgnoreCase) >= 0);
+	}
+#endif
 
 	[Fact]
 	public async Task Post_BadCharsetHeader_RecoversPollingUrlAndPolls()
@@ -424,7 +454,7 @@ public class SmartConnectClientPollingTests
 
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		Assert.True(progress.Calls > 0);
-		var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("progress", StringComparison.OrdinalIgnoreCase));
+		var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.IndexOf("progress", StringComparison.OrdinalIgnoreCase) >= 0);
 		Assert.Contains(warning.State, p => p.Key == "ExceptionType" && (string?)p.Value == nameof(ObjectDisposedException));
 	}
 

@@ -209,7 +209,7 @@ public class SmartConnectClientTransactionTests
 	[InlineData(HttpStatusCode.Unauthorized)]
 	[InlineData(HttpStatusCode.Forbidden)]
 	[InlineData(HttpStatusCode.NotFound)]
-	[InlineData(HttpStatusCode.TooManyRequests)]
+	[InlineData((HttpStatusCode)429)] // HttpStatusCode.TooManyRequests is not defined on net48
 	public async Task Process_Http4xx_ReturnsFailedServiceError_SentinelClosed(HttpStatusCode status)
 	{
 		// The 4xx bucket is a genuine verdict that the request was NOT processed (429 included:
