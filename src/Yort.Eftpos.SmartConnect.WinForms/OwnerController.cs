@@ -1,17 +1,30 @@
 using System;
+using System.Collections.Generic;
 using System.Windows.Forms;
 
 namespace Yort.Eftpos.SmartConnect.WinForms;
 
 /// <summary>Disables an owner window while the dialog is busy and restores it afterwards, giving
 /// modal-like behaviour without a thread-blocking <c>ShowDialog</c>. A null owner is a no-op (the
-/// dialog simply centres on screen).</summary>
+/// dialog simply centres on screen). Owner enable/disable is reference-counted per owner handle across all
+/// controllers, so two dialogs sharing one owner disable it once and re-enable it only when the last one
+/// releases — otherwise, since <c>EnableWindow</c> is absolute (no nesting), the first dialog to finish would
+/// re-enable the owner while the second is still busy. The count relies on every <see cref="Disable"/> being
+/// matched by a <see cref="Restore"/>, which the dialogs guarantee via their finally/dispose paths.</summary>
 internal sealed class OwnerController
 {
+	// Per-owner-handle disable depth, shared across all controllers. Guarded by its own lock because separate
+	// owners may live on separate UI threads; entries are removed when the depth returns to zero.
+	private static readonly Dictionary<IntPtr, int> _disableDepthByHandle = new Dictionary<IntPtr, int>();
+	private static readonly object _depthLock = new object();
+
 	private readonly IWin32Window? _owner;
 	private readonly Func<bool> _disableWhileBusy;
 	private readonly Action<IntPtr, bool> _setWindowEnabled;
 	private bool _disabled;
+	// The handle this controller counted against, captured at Disable — used as the count key at Restore even
+	// if the owner is disposed by then (its live Handle would throw).
+	private IntPtr _disabledHandle;
 
 	/// <summary>Creates a controller for the given owner.</summary>
 	/// <param name="owner">The owner window, or null when there is none.</param>
@@ -35,21 +48,48 @@ internal sealed class OwnerController
 			return;
 		}
 
-		if (_owner != null && _disableWhileBusy())
+		if (_owner == null || !_disableWhileBusy())
 		{
-			try
-			{
-				_setWindowEnabled(_owner.Handle, false);
-				_disabled = true;
-			}
-			catch (ObjectDisposedException)
-			{
-				// The owner was disposed before the dialog's first show; Handle on a disposed control
-				// throws. Disable() runs inside a Progress<T>-posted callback, so letting this escape is
-				// an unhandled UI-thread exception mid-transaction. Nothing was disabled (_disabled stays
-				// false), so a later Restore() correctly no-ops. Restore() has the matching guard.
-			}
+			return;
 		}
+
+		IntPtr handle;
+		try
+		{
+			handle = _owner.Handle;
+		}
+		catch (ObjectDisposedException)
+		{
+			// The owner was disposed before the dialog's first show; Handle on a disposed control throws.
+			// Disable() runs inside a Progress<T>-posted callback, so letting this escape is an unhandled
+			// UI-thread exception mid-transaction. Nothing was disabled (_disabled stays false), so a later
+			// Restore() correctly no-ops.
+			return;
+		}
+
+		lock (_depthLock)
+		{
+			_disableDepthByHandle.TryGetValue(handle, out var depth);
+			if (depth == 0)
+			{
+				// First disabler for this owner does the actual disable. If the native call throws (owner
+				// disposed between reading Handle and here), leave the depth at zero and _disabled false so
+				// Restore() no-ops.
+				try
+				{
+					_setWindowEnabled(handle, false);
+				}
+				catch (ObjectDisposedException)
+				{
+					return;
+				}
+			}
+
+			_disableDepthByHandle[handle] = depth + 1;
+		}
+
+		_disabled = true;
+		_disabledHandle = handle;
 	}
 
 	/// <summary>Re-enables the owner if (and only if) this controller disabled it. Idempotent, and safe to call
@@ -65,15 +105,34 @@ internal sealed class OwnerController
 		// second Restore()/Dispose() must neither retry nor re-throw.
 		_disabled = false;
 
-		try
+		lock (_depthLock)
 		{
-			_setWindowEnabled(_owner!.Handle, true);
-		}
-		catch (ObjectDisposedException)
-		{
-			// The owner was disposed while the dialog was busy (owner closed / app shutdown mid-transaction), so
-			// accessing its Handle throws. A disposed window is already re-enabled by the OS — there is nothing to
-			// restore, and letting this escape would mask the real result or bubble out of Dispose().
+			if (!_disableDepthByHandle.TryGetValue(_disabledHandle, out var depth))
+			{
+				return;
+			}
+
+			if (depth > 1)
+			{
+				// Another dialog still has the owner disabled — just release our reference; do NOT re-enable.
+				_disableDepthByHandle[_disabledHandle] = depth - 1;
+				return;
+			}
+
+			// Last disabler releases — re-enable the owner. Go through the live owner Handle (not the captured
+			// one) so a disposed owner is handled as before: a disposed window is already re-enabled by the OS,
+			// so the throw is swallowed and no re-enable is issued.
+			_disableDepthByHandle.Remove(_disabledHandle);
+			try
+			{
+				_setWindowEnabled(_owner!.Handle, true);
+			}
+			catch (ObjectDisposedException)
+			{
+				// The owner was disposed while the dialog was busy (owner closed / app shutdown mid-transaction),
+				// so accessing its Handle throws. Nothing to restore; escaping would mask the result or bubble
+				// out of Dispose().
+			}
 		}
 	}
 }
