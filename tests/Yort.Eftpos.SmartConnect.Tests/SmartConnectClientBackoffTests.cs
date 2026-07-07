@@ -217,6 +217,44 @@ public class SmartConnectClientBackoffTests
 	}
 
 	[Fact]
+	public async Task Poll_BackoffNeverWaitsPastMaxPollDuration()
+	{
+		// (M2) BackoffCap larger than MaxPollDuration is a legal config (Validate only requires
+		// BackoffCap >= PollInterval). A single backoff / Retry-After wait must still not overshoot the poll
+		// budget: the wait is clamped to the remaining deadline, so a vendor's 1000s Retry-After becomes the
+		// 17s left rather than blowing MaxPollDuration wide open.
+		var handler = SequencedHandler(
+			() => RateLimited(new RetryConditionHeaderValue(TimeSpan.FromSeconds(1000))),
+			() => Json(HttpStatusCode.OK, AcceptedPollJson));
+
+		var now = BaseTime;
+		var delays = new List<TimeSpan>();
+		using var client = new SmartConnectClient(new SmartConnectClientConfiguration
+		{
+			BaseUrl = new Uri("https://unit.test/POS"),
+			StateStore = new InMemoryTransactionStateStore(),
+			HttpClient = new HttpClient(handler),
+			PollInterval = TimeSpan.FromSeconds(3),
+			MaxPollDuration = TimeSpan.FromSeconds(20),
+			BackoffCap = TimeSpan.FromSeconds(1000)
+		});
+		client.Clock = () => now;
+		client.PollDelay = delay =>
+		{
+			delays.Add(delay);
+			now += delay;
+			return Task.CompletedTask;
+		};
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		// First poll at 3s; the 1000s Retry-After clamps to the 17s of remaining budget (total == 20s), and
+		// that final poll still lands (Accepted) — the clamp bounds the wait, it does not skip the poll.
+		Assert.Equal(Seconds(3, 17), delays);
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+	}
+
+	[Fact]
 	public async Task Poll_RetryAfterDateInPast_FlooredToMinimumPollInterval()
 	{
 		// A stale/past date must never produce a zero/negative wait — that would be an immediate re-poll,

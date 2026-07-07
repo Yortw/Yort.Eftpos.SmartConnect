@@ -110,9 +110,9 @@ public sealed class SmartConnectClient : IDisposable
 			throw new ArgumentNullException(nameof(request));
 		}
 
-		RequireField(request.POSRegisterID, nameof(request.POSRegisterID));
-		RequireField(request.POSBusinessName, nameof(request.POSBusinessName));
-		RequireField(request.POSVendorName, nameof(request.POSVendorName));
+		RequireField(request.POSRegisterID, nameof(request.POSRegisterID), nameof(request));
+		RequireField(request.POSBusinessName, nameof(request.POSBusinessName), nameof(request));
+		RequireField(request.POSVendorName, nameof(request.POSVendorName), nameof(request));
 		ThrowIfDisposed();
 
 		var fields = new List<KeyValuePair<string, string?>>(4)
@@ -143,9 +143,7 @@ public sealed class SmartConnectClient : IDisposable
 						return new SmartConnectPairingResult { Success = true };
 					}
 
-					var body = response.Content == null
-						? string.Empty
-						: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+					var body = await ReadBodySafelyAsync(response).ConfigureAwait(false);
 
 					var errorMessage = GetErrorMessage(response, body);
 					// Pairing was the one operation that logged on no failure path, so a terse service error
@@ -198,7 +196,9 @@ public sealed class SmartConnectClient : IDisposable
 	/// See <see cref="ProcessTransactionAsync(SmartConnectTransactionRequest)"/> for the full contract.
 	/// </summary>
 	/// <param name="request">The transaction to process.</param>
-	/// <param name="progress">An optional progress sink; reports carry no outcome responsibility.</param>
+	/// <param name="progress">An optional progress sink; reports carry no outcome responsibility. An exception
+	/// thrown by the sink is swallowed and logged (a failing side-channel must never abort the transaction),
+	/// so it cannot be used to signal or cancel — it is informational only.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
 	/// <exception cref="ArgumentException">A mandatory field is blank, or the total amount is not positive.</exception>
 	/// <exception cref="ObjectDisposedException">The client has been disposed.</exception>
@@ -262,9 +262,7 @@ public sealed class SmartConnectClient : IDisposable
 	{
 		using (response)
 		{
-			var body = response.Content == null
-				? string.Empty
-				: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+			var body = await ReadBodySafelyAsync(response).ConfigureAwait(false);
 
 			if (!response.IsSuccessStatusCode)
 			{
@@ -322,6 +320,20 @@ public sealed class SmartConnectClient : IDisposable
 				};
 			}
 
+			if (!IsUsablePollingUrl(initial.PollingUrl!))
+			{
+				// 200, but the polling URL is not a usable absolute http(s) URL — sending to it would throw
+				// from HttpClient mid-loop. Epistemically the same as no URL: the transaction may be live, so
+				// Unknown with the sentinel left pending; PollingUrlInvalid names the specific cause.
+				SafeLog(LogLevel.Error, null, "SmartConnect accepted the transaction POST for {ClientTransactionRef} but returned an unusable polling URL — outcome is UNKNOWN; recovery must investigate.", request.ClientTransactionRef);
+				return new SmartConnectTransactionResult
+				{
+					Status = SmartConnectTransactionStatus.Unknown,
+					FailureCause = SmartConnectFailureCause.PollingUrlInvalid,
+					TransactionId = initial.TransactionId
+				};
+			}
+
 			// (F2) transactionId ONLY — the URL carries the merchantAccessToken and is never logged.
 			SafeLog(LogLevel.Information, null, "Polling URL received for {ClientTransactionRef} (transactionId {TransactionId}).", request.ClientTransactionRef, initial.TransactionId);
 
@@ -347,8 +359,9 @@ public sealed class SmartConnectClient : IDisposable
 	/// a transaction's outcome. Jumps straight to the poll loop: the sentinel already exists from before the
 	/// crash, so neither <c>SaveTransactionAttemptAsync</c> nor <c>UpdatePollingDetailsAsync</c> is called;
 	/// <c>UpdateCompletedAsync</c> IS called when a terminal state is reached. Never throws for runtime
-	/// conditions — an expired URL surfaces as <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>,
-	/// meaning the outcome can no longer be determined programmatically: resolve it by manual reconciliation.
+	/// conditions — an expired OR malformed URL (present but not an absolute http(s) URI) surfaces as
+	/// <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>, meaning the outcome can no longer be determined
+	/// programmatically: resolve it by manual reconciliation. Only a null/blank URL throws (a missing argument).
 	/// </summary>
 	/// <param name="pollingUrl">The persisted polling URL (carries the access token — handle accordingly).</param>
 	/// <param name="clientTransactionRef">The reference the transaction's state is persisted under.</param>
@@ -391,6 +404,21 @@ public sealed class SmartConnectClient : IDisposable
 		}
 
 		ThrowIfDisposed();
+
+		if (!IsUsablePollingUrl(pollingUrl))
+		{
+			// The URL a caller passes here is typically a persisted copy of an earlier service-supplied value,
+			// so a present-but-unusable one (relative, or a non-http scheme) is a runtime/data condition, not a
+			// caller bug — resolve it like the poll-verdict path (Unknown/PollingUrlInvalid, manual reconcile),
+			// never a throw. Only a null/blank URL (handled above) is a genuine missing-argument error. The
+			// pre-crash sentinel is left untouched (pending).
+			SafeLog(LogLevel.Error, null, "The polling URL supplied to ResumePollingAsync for {ClientTransactionRef} is not a usable absolute http(s) URL — outcome UNKNOWN; manual reconciliation required.", clientTransactionRef);
+			return Task.FromResult(new SmartConnectTransactionResult
+			{
+				Status = SmartConnectTransactionStatus.Unknown,
+				FailureCause = SmartConnectFailureCause.PollingUrlInvalid
+			});
+		}
 
 		return PollForResultAsync(pollingUrl, null, clientTransactionRef, progress);
 	}
@@ -574,9 +602,9 @@ public sealed class SmartConnectClient : IDisposable
 			throw new ArgumentNullException(nameof(registration));
 		}
 
-		RequireField(registration.POSRegisterID, nameof(registration.POSRegisterID));
-		RequireField(registration.POSBusinessName, nameof(registration.POSBusinessName));
-		RequireField(registration.POSVendorName, nameof(registration.POSVendorName));
+		RequireField(registration.POSRegisterID, nameof(registration.POSRegisterID), nameof(registration));
+		RequireField(registration.POSBusinessName, nameof(registration.POSBusinessName), nameof(registration));
+		RequireField(registration.POSVendorName, nameof(registration.POSVendorName), nameof(registration));
 		ThrowIfDisposed();
 
 		SafeLog(LogLevel.Information, null, "Sending {TransactionType} (non-financial operation).", transactionType);
@@ -600,17 +628,33 @@ public sealed class SmartConnectClient : IDisposable
 
 		using (response)
 		{
-			var body = response.Content == null
-				? string.Empty
-				: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+			var body = await ReadBodySafelyAsync(response).ConfigureAwait(false);
 
 			if (!response.IsSuccessStatusCode)
 			{
-				SafeLog(LogLevel.Error, null, "SmartConnect rejected the {TransactionType} request: {ServiceError}", transactionType, GetErrorMessage(response, body));
+				var serviceError = GetErrorMessage(response, body);
+				if (IsPossiblyIntermediaryStatus(response.StatusCode))
+				{
+					// (I1) A 5xx/408 can be generated by an intermediary (LB/WAF/proxy) AFTER the service
+					// received the POST — epistemically the same as a transport timeout (see the financial
+					// path). For the STATE-CHANGING SettlementCutoverAsync, Failed ("blind retry will fail
+					// again") would invite a second settlement window over an executed cutover, so map to
+					// Unknown; the read-only ops (status/logon/inquiry/journal) get the same honest Unknown.
+					SafeLog(LogLevel.Error, null, "SmartConnect answered the {TransactionType} POST with HTTP {StatusCode}, which an intermediary can generate after the service received the request — outcome UNKNOWN; manual reconciliation required. {ServiceError}", transactionType, (int)response.StatusCode, serviceError);
+					return new SmartConnectTransactionResult
+					{
+						Status = SmartConnectTransactionStatus.Unknown,
+						FailureCause = SmartConnectFailureCause.TransportUnknown,
+						ErrorMessage = serviceError
+					};
+				}
+
+				SafeLog(LogLevel.Error, null, "SmartConnect rejected the {TransactionType} request: {ServiceError}", transactionType, serviceError);
 				return new SmartConnectTransactionResult
 				{
 					Status = SmartConnectTransactionStatus.Failed,
-					FailureCause = SmartConnectFailureCause.ServiceError
+					FailureCause = SmartConnectFailureCause.ServiceError,
+					ErrorMessage = serviceError
 				};
 			}
 
@@ -631,6 +675,17 @@ public sealed class SmartConnectClient : IDisposable
 				{
 					Status = SmartConnectTransactionStatus.Unknown,
 					FailureCause = SmartConnectFailureCause.TransportUnknown,
+					TransactionId = initial.TransactionId
+				};
+			}
+
+			if (!IsUsablePollingUrl(initial.PollingUrl!))
+			{
+				SafeLog(LogLevel.Error, null, "SmartConnect accepted the {TransactionType} request but returned an unusable polling URL — the result cannot be retrieved.", transactionType);
+				return new SmartConnectTransactionResult
+				{
+					Status = SmartConnectTransactionStatus.Unknown,
+					FailureCause = SmartConnectFailureCause.PollingUrlInvalid,
 					TransactionId = initial.TransactionId
 				};
 			}
@@ -667,11 +722,17 @@ public sealed class SmartConnectClient : IDisposable
 		if (inner.Status == SmartConnectTransactionStatus.Unknown)
 		{
 			status = SmartConnectOperationStatus.Unknown;
+			// Carry any service/intermediary message (e.g. a 5xx body) so the operation shape is as diagnosable
+			// as the transaction shape; null when there was none (poll timeout, dispose).
+			error = inner.ErrorMessage;
 		}
 		else if (inner.FailureCause == SmartConnectFailureCause.ServiceError)
 		{
 			status = SmartConnectOperationStatus.Failed;
-			error = "The operation was rejected by the service.";
+			// Prefer the service's own message; the generic text stands in only if none was extractable.
+			error = string.IsNullOrEmpty(inner.ErrorMessage)
+				? "The operation was rejected by the service."
+				: inner.ErrorMessage;
 		}
 		else
 		{
@@ -724,20 +785,27 @@ public sealed class SmartConnectClient : IDisposable
 
 		while (true)
 		{
-			if (_disposed || Clock() >= deadline)
+			// Snapshot the volatile flag once so the log reason and the sentinel decision below cannot disagree
+			// on a torn read.
+			var disposed = _disposed;
+			if (disposed || Clock() >= deadline)
 			{
-				// Poll exhaustion/abandonment is the "live caller" Unknown: the caller gets the result and
-				// owns reconciliation, so the sentinel closes as Unknown (distinct from POST-phase
-				// TransportUnknown, where no response ever arrived). Dispose is a deliberate host action
-				// (shutdown) — Warning; only genuine exhaustion is an Error.
+				// Two UNKNOWN exits, disposed differently:
+				//  - Genuine exhaustion (deadline): the live caller receives Unknown and owns reconciliation,
+				//    so the sentinel closes as Unknown (distinct from POST-phase TransportUnknown, where no
+				//    response ever arrived). An Error.
+				//  - Dispose (host shutdown): the caller is going away and the returned Unknown may never be
+				//    observed, so the sentinel is LEFT PENDING — that pending record is the only thing that
+				//    lets ResumePollingAsync recover the outcome after restart, which is the flow
+				//    ProcessTransactionAsync's remarks direct the host to use. A deliberate action — Warning.
 				SafeLog(
-					_disposed ? LogLevel.Warning : LogLevel.Error,
+					disposed ? LogLevel.Warning : LogLevel.Error,
 					null,
 					"Polling ended without a terminal answer for {ClientTransactionRef} after {ElapsedSeconds}s ({Reason}) — outcome UNKNOWN; reconcile before retrying.",
 					clientTransactionRef ?? "(journal query)",
 					(int)(Clock() - startedAt).TotalSeconds,
-					_disposed ? "client disposed" : "MaxPollDuration exceeded");
-				if (clientTransactionRef != null)
+					disposed ? "client disposed" : "MaxPollDuration exceeded");
+				if (!disposed && clientTransactionRef != null)
 				{
 					await CloseSentinelQuietlyAsync(clientTransactionRef, SmartConnectTransactionStatus.Unknown).ConfigureAwait(false);
 				}
@@ -747,6 +815,15 @@ public sealed class SmartConnectClient : IDisposable
 					Status = SmartConnectTransactionStatus.Unknown,
 					TransactionId = transactionId
 				};
+			}
+
+			// Clamp the wait to the remaining budget: Validate permits BackoffCap (and thus a Retry-After) larger
+			// than MaxPollDuration, and without this a single backoff could wait far past the deadline. The
+			// loop-entry check above guarantees remaining > 0 here; a final poll still lands right at the deadline.
+			var remaining = deadline - Clock();
+			if (remaining < nextDelay)
+			{
+				nextDelay = remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
 			}
 
 			await PollDelay(nextDelay).ConfigureAwait(false);
@@ -764,7 +841,7 @@ public sealed class SmartConnectClient : IDisposable
 						backoffInterval = Min(TimeSpan.FromTicks(backoffInterval.Ticks * 2), _backoffCap);
 						nextDelay = GetRetryAfterDelay(response) ?? backoffInterval;
 						SafeLog(LogLevel.Debug, null, "Rate-limited (HTTP 429) for {ClientTransactionRef} — backing off; next poll in {NextDelaySeconds}s.", clientTransactionRef, (int)nextDelay.TotalSeconds);
-						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.BackingOff });
+						ReportProgress(progress, new SmartConnectPollingStatus { State = SmartConnectPollingState.BackingOff });
 						continue;
 					}
 
@@ -785,13 +862,11 @@ public sealed class SmartConnectClient : IDisposable
 					if (!response.IsSuccessStatusCode)
 					{
 						// 5xx is transient — keep polling within MaxPollDuration (429 is handled above).
-						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
+						ReportProgress(progress, new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
 						continue;
 					}
 
-					var body = response.Content == null
-						? string.Empty
-						: await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+					var body = await ReadBodySafelyAsync(response).ConfigureAwait(false);
 
 					PollResult poll;
 					try
@@ -801,7 +876,7 @@ public sealed class SmartConnectClient : IDisposable
 					catch (JsonException)
 					{
 						// A garbled poll body (proxy blip) is transient — the next poll re-asks.
-						progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
+						ReportProgress(progress, new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError });
 						continue;
 					}
 
@@ -820,7 +895,7 @@ public sealed class SmartConnectClient : IDisposable
 						return result;
 					}
 
-					progress?.Report(new SmartConnectPollingStatus
+					ReportProgress(progress, new SmartConnectPollingStatus
 					{
 						State = poll.Progress == PollProgress.Delayed
 							? SmartConnectPollingState.Delayed
@@ -834,9 +909,38 @@ public sealed class SmartConnectClient : IDisposable
 				// runs, so there is no tight retry-storm. NEVER treat "couldn't reach the server" as "URL
 				// expired" — a live transaction may still be fine.
 				SafeLog(LogLevel.Warning, ex, "Network error during poll for {ClientTransactionRef} — retrying on the next interval.", clientTransactionRef);
-				progress?.Report(new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError, Error = ex });
+				ReportProgress(progress, new SmartConnectPollingStatus { State = SmartConnectPollingState.NetworkError, Error = ex });
 			}
 		}
+	}
+
+	// A consumer's IProgress sink is an informational side-channel; a throw from it (a WinForms Control.Invoke
+	// onto a form the operator just closed is the classic case) must never abort the poll of a live payment.
+	// Swallow and log by type — strictly weaker than the operation, exactly as SafeLog treats a failing logger.
+	private void ReportProgress(IProgress<SmartConnectPollingStatus>? progress, SmartConnectPollingStatus status)
+	{
+		if (progress == null)
+		{
+			return;
+		}
+
+		try
+		{
+			progress.Report(status);
+		}
+		catch (Exception ex)
+		{
+			SafeLog(LogLevel.Warning, null, "A progress report callback threw ({ExceptionType}) — suppressed; it has no bearing on the transaction outcome.", ex.GetType().Name);
+		}
+	}
+
+	// A usable polling URL is an absolute http(s) URI. Uri.TryCreate(..., Absolute) alone is not enough — it
+	// accepts foo:bar / file:///x / mailto:, which HttpClient then throws on (or, worse, dispatches) mid-poll;
+	// the scheme check keeps an unusable URL on the graceful PollingUrlInvalid path instead of a raw throw.
+	private static bool IsUsablePollingUrl(string url)
+	{
+		return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+			&& (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 	}
 
 	private static bool IsPollingUrlVerdict(HttpStatusCode statusCode)
@@ -933,11 +1037,11 @@ public sealed class SmartConnectClient : IDisposable
 			throw new ArgumentNullException(nameof(request));
 		}
 
-		RequireField(request.ClientTransactionRef, nameof(request.ClientTransactionRef));
-		RequireField(request.POSRegisterID, nameof(request.POSRegisterID));
-		RequireField(request.POSBusinessName, nameof(request.POSBusinessName));
-		RequireField(request.POSVendorName, nameof(request.POSVendorName));
-		RequireField(request.TransactionType, nameof(request.TransactionType));
+		RequireField(request.ClientTransactionRef, nameof(request.ClientTransactionRef), nameof(request));
+		RequireField(request.POSRegisterID, nameof(request.POSRegisterID), nameof(request));
+		RequireField(request.POSBusinessName, nameof(request.POSBusinessName), nameof(request));
+		RequireField(request.POSVendorName, nameof(request.POSVendorName), nameof(request));
+		RequireField(request.TransactionType, nameof(request.TransactionType), nameof(request));
 
 		if (request.AmountTotal.ToCents() <= 0)
 		{
@@ -1052,9 +1156,10 @@ public sealed class SmartConnectClient : IDisposable
 		try
 		{
 			// The default HttpCompletionOption.ResponseContentRead buffers the body during this call, so
-			// mid-body network failures surface inside this wrap; later ReadAsStringAsync calls read from
-			// the buffer and cannot fail on network. Do not change the completion option without
-			// revisiting that assumption.
+			// mid-body NETWORK failures surface inside this wrap; later reads work off the buffer and cannot
+			// fail on network. They can still fail on DECODE (a bad charset turning bytes into a string) —
+			// that is handled separately by ReadBodySafelyAsync, not here. Do not change the completion option
+			// without revisiting the network assumption.
 			return await _httpClient.SendAsync(request).ConfigureAwait(false);
 		}
 		catch (ObjectDisposedException ex)
@@ -1068,6 +1173,43 @@ public sealed class SmartConnectClient : IDisposable
 		catch (Exception ex) when (TransportFailureClassifier.IsTransportFailure(ex))
 		{
 			throw new SmartConnectTransportException(TransportFailureClassifier.Classify(ex), ex);
+		}
+	}
+
+	// Reads a buffered response body without ever throwing. The transport wrap (SendAsync) already surfaced any
+	// NETWORK failure; this guards the separate DECODE step HttpContent performs when turning bytes into a
+	// string, which throws InvalidOperationException for a charset the runtime cannot resolve (on net48 even a
+	// quoted charset) — exactly the sloppy headers an intermediary tends to carry. SmartConnect speaks UTF-8, so
+	// when the declared charset is unusable we recover the body from the raw bytes as UTF-8 rather than discard
+	// it: a valid response whose header merely lies is then parsed normally instead of becoming a false Unknown.
+	// UTF-8 decoding here is permissive (replacement chars, never throws); a body that is still not valid JSON
+	// falls through the existing garbled-body handling (Unknown on the POST, retry on the poll). If even reading
+	// the bytes fails, an empty body routes the same way. Diagnostic-only: logging is best-effort.
+	private async Task<string> ReadBodySafelyAsync(HttpResponseMessage response)
+	{
+		if (response.Content == null)
+		{
+			return string.Empty;
+		}
+
+		try
+		{
+			return await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+		}
+		catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException)
+		{
+			try
+			{
+				var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+				// (G7) The decode exception message can echo the charset/headers — log the TYPE only.
+				SafeLog(LogLevel.Warning, null, "Response body declared an unusable charset ({ExceptionType}) — recovered by decoding the raw bytes as UTF-8.", ex.GetType().Name);
+				return Encoding.UTF8.GetString(bytes);
+			}
+			catch (Exception inner)
+			{
+				SafeLog(LogLevel.Warning, null, "Response body could not be read ({ExceptionType}) — treating it as empty; the outcome resolves to unknown/retryable downstream.", inner.GetType().Name);
+				return string.Empty;
+			}
 		}
 	}
 
@@ -1156,11 +1298,11 @@ public sealed class SmartConnectClient : IDisposable
 		return null;
 	}
 
-	private static void RequireField(string? value, string fieldName)
+	private static void RequireField(string? value, string fieldName, string paramName)
 	{
 		if (string.IsNullOrWhiteSpace(value))
 		{
-			throw new ArgumentException($"{fieldName} is mandatory — it must match across pairing and all subsequent transactions.", "request");
+			throw new ArgumentException($"{fieldName} is mandatory — it must match across pairing and all subsequent transactions.", paramName);
 		}
 	}
 

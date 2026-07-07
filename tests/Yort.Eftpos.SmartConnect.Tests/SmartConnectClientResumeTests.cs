@@ -189,6 +189,33 @@ public class SmartConnectClientResumeTests
 		Assert.Contains("UpdateCompleted:" + Ref + ":Unknown", store.CallLog);
 	}
 
+	[Theory]
+	[InlineData("relative/path")]
+	[InlineData("foo:bar")]
+	[InlineData("file:///x")]
+	public async Task Resume_PresentButUnusableUrl_ReturnsPollingUrlInvalid_NeverThrows(string badUrl)
+	{
+		// (M3/F1/F8) A persisted polling URL is a runtime/data value, not a caller bug — a present-but-unusable
+		// one (relative, or a non-http scheme like foo:/file: that Uri.TryCreate(Absolute) would still accept
+		// but HttpClient would throw on) resolves to Unknown/PollingUrlInvalid, never a throw and never a send
+		// attempt. The pre-crash sentinel is left pending for manual reconciliation.
+		var store = StoreWithPendingSentinel();
+		var sent = 0;
+		var handler = new MockHttpHandler(_ =>
+		{
+			sent++;
+			return Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson));
+		});
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ResumePollingAsync(badUrl, Ref);
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+		Assert.Equal(SmartConnectFailureCause.PollingUrlInvalid, result.FailureCause);
+		Assert.Equal(0, sent);
+		Assert.Null(store.Records[Ref].Status);
+	}
+
 	[Fact]
 	public async Task Resume_NullOrEmptyArguments_Throw()
 	{

@@ -53,10 +53,12 @@ public class SmartConnectClientDisposeTests
 	}
 
 	[Fact]
-	public async Task Dispose_DuringActivePoll_CompletesWithUnknownAndClosesSentinel()
+	public async Task Dispose_DuringActivePoll_CompletesWithUnknownAndLeavesSentinelPending()
 	{
-		// Shutdown mid-transaction: the loop must notice the disposal at the next iteration, close the
-		// sentinel as Unknown, and complete the task — never hang the host's shutdown on a pinpad.
+		// Shutdown mid-transaction: the loop must notice the disposal, complete the task with Unknown (never
+		// hang the host's shutdown), and — unlike genuine poll exhaustion — LEAVE the sentinel pending. The
+		// host is going away, so the returned Unknown may never be observed; the pending record is what lets
+		// ResumePollingAsync recover the outcome after restart (ProcessTransactionAsync's documented flow).
 		var store = new InMemoryTransactionStateStore();
 		var client = new SmartConnectClient(CreateConfiguration(PendingForeverHandler(), store));
 
@@ -77,7 +79,9 @@ public class SmartConnectClientDisposeTests
 		var result = await client.ProcessTransactionAsync(CreateRequest());
 
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
-		Assert.Contains("UpdateCompleted:" + Ref + ":Unknown", store.CallLog);
+		// The sentinel is NOT closed — it stays pending (Status null) so a restart can resume it.
+		Assert.DoesNotContain(store.CallLog, entry => entry.StartsWith("UpdateCompleted:" + Ref));
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Fact]
