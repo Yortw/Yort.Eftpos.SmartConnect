@@ -32,7 +32,11 @@ public sealed class SmartConnectTransactionResult : SmartConnectResult
 	/// which <c>Journal.GetTransResult</c> uses to carry the reported (last) transaction's id while the
 	/// envelope <see cref="SmartConnectResult.TransactionId"/> identifies the journal query itself (ADR
 	/// Decision 10). Null on the normal transaction path, where
-	/// <see cref="SmartConnectResult.TransactionId"/> already identifies the transaction.
+	/// <see cref="SmartConnectResult.TransactionId"/> already identifies the transaction. This is the device's
+	/// id for the transaction it chose to report — it is NOT a correlation key to your own sale (your
+	/// transaction's id is server-generated and, in the crash case, was never persisted), so never use it to
+	/// decide a recovered transaction is yours; the journal result is diagnostic evidence for manual
+	/// reconciliation only.
 	/// </summary>
 	public string? ReferenceId { get; init; }
 

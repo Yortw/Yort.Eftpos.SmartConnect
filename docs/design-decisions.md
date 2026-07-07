@@ -373,10 +373,12 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
   by **`AmountTotal`** — the only field carried across the gap (there is no shared id, and the terminal
   clock is unreliable for timestamp matching) — and on a non-match surface `Unknown` for reconciliation.
   A same-amount collision between two registers is unresolvable by this match; that residual risk folds
-  into Decision 6's known hole.
+  into Decision 6's known hole. *(Superseded — see the 2026-07-02 update below: amount matching is not
+  reliable evidence and no auto-adopt is sanctioned; the journal is diagnostic only.)*
 - **Library support:** `SmartConnectTransactionResult.ReferenceId` surfaces the reported (recovered)
   transaction's id distinctly from the query's `TransactionId`; `AmountTotal` is the documented match
-  field, and `GetLastTransactionResultAsync` documents the device-scoped semantics.
+  field *(superseded — see the 2026-07-02 update: amount matching is not reliable and no auto-adopt is
+  sanctioned)*, and `GetLastTransactionResultAsync` documents the device-scoped semantics.
 
 ### Update (2026-06-17) — recovery contract hardened; `SaleData` ruled out as a key
 
@@ -384,7 +386,8 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
   a *candidate* plus its match evidence (`ReferenceId`, `AmountTotal`); it makes no adopt decision and never
   asserts "this is yours." A recovery layer exists to *prevent* false certainty, so silently attaching the
   device's last transaction to our sale would defeat its purpose. The caller match-before-adopts (today:
-  `AmountTotal`) and resolves anything short of a confident match to `Unknown`.
+  `AmountTotal`) and resolves anything short of a confident match to `Unknown`. *(Superseded — see the
+  2026-07-02 update: no auto-adopt is sanctioned at all; amount matching is not reliable evidence.)*
 - **How the caller confirms a candidate is a deferred, integrity-sensitive decision — not a glib prompt.** An
   "Is this your transaction? [Yes]" dialog to a busy operator degrades into a rubber-stamp, reintroducing the
   false certainty wearing a human fig-leaf. Whether to adopt automatically (single-register only), route to
