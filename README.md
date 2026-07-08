@@ -87,6 +87,11 @@ switch (result.Status)
 		// StateStoreFailure (nothing sent — store unavailable; retry once it recovers).
 		break;
 }
+
+// The library leaves the recovery record PENDING — it does NOT mark completion. AFTER you have durably
+// recorded the outcome against your sale, complete the record so recovery stops re-polling it. Persist
+// idempotently by ClientTransactionRef: recovery can replay a still-pending completed transaction.
+await configuration.StateStore.UpdateCompletedAsync(saleReference, result.Status);
 ```
 
 Pass an `IProgress<SmartConnectPollingStatus>` to the second overload for UI feedback while polling (`Polling`, `Delayed`, `BackingOff`, `NetworkError`).
@@ -100,6 +105,9 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 	{
 		// Resume polling the persisted URL — the ONLY programmatic way to recover an outcome.
 		var recovered = await client.ResumePollingAsync(pending.PollingUrl, pending.ClientTransactionRef);
+			// The library leaves this record pending too. On a real terminal status, durably record the outcome
+			// (idempotently — recovery may re-deliver a sale you already processed), THEN call
+			// configuration.StateStore.UpdateCompletedAsync(pending.ClientTransactionRef, recovered.Status).
 		// recovered.FailureCause == PollingUrlInvalid means the URL expired: the outcome is
 		// unknown — resolve it by manual reconciliation, then update the sentinel yourself.
 	}
