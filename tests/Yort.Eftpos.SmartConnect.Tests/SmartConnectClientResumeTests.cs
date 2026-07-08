@@ -166,6 +166,43 @@ public class SmartConnectClientResumeTests
 		}
 	}
 
+	[Fact]
+	public async Task Resume_ExhaustsWhilePending_LeavesSentinelPending_ThenLaterResumeDeliversTheSettledOutcome()
+	{
+		// (Decision 13) The recovery-exhaustion window, closed. The first resume polls a still-PENDING
+		// transaction until MaxPollDuration and returns Unknown, but leaves the record pending. When the
+		// transaction later settles, a subsequent resume — via a FRESH client, as after a process restart —
+		// re-polls the same URL, now gets the terminal outcome, and the consumer completes it. If exhaustion
+		// had finalized the record (pre-Decision-13), it would have dropped from the pending scan and the
+		// settled outcome would have been lost.
+		var store = StoreWithPendingSentinel();
+		var settled = false;
+		var handler = new MockHttpHandler(_ =>
+			Task.FromResult(Json(HttpStatusCode.OK, settled ? AcceptedPollJson : PendingPollJson)));
+
+		using (var client = CreateClient(handler, store))
+		{
+			var exhausted = await client.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Unknown, exhausted.Status);   // timeliness signal
+			Assert.Null(store.Records[Ref].Status);                                  // library did NOT finalize
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
+
+		// The transaction settles after we gave up waiting.
+		settled = true;
+
+		// Fresh client = process restart: only knowledge is the durable store row + polling URL.
+		using (var client2 = CreateClient(handler, store))
+		{
+			var recovered = await client2.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Accepted, recovered.Status);  // late outcome recovered
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+
+			await store.UpdateCompletedAsync(Ref, recovered.Status);                 // consumer persisted -> complete
+			Assert.DoesNotContain(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
+	}
+
 	[Theory]
 	[InlineData(HttpStatusCode.Unauthorized)]
 	[InlineData(HttpStatusCode.Forbidden)]
