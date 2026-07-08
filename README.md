@@ -91,9 +91,10 @@ switch (result.Status)
 // A resolved financial outcome (Accepted/Declined/Cancelled) is yours to record. AFTER you have durably
 // recorded it against your sale, complete the recovery record so recovery stops re-polling it — persist
 // idempotently by ClientTransactionRef, since recovery can replay a still-pending completed transaction.
-// Do NOT blanket-complete every status: on Unknown/Failed the library has already closed the records it
-// can (service reject, never-sent, poll-exhaustion) and deliberately left the rest pending for recovery
-// or manual reconciliation (see step 3). Completing a StateStoreFailure would throw — no record exists.
+// Do NOT blanket-complete every status: on Unknown/Failed the library has already closed what it can
+// (a rejected or never-sent POST, as Failed) and deliberately leaves the rest — including
+// poll-exhaustion and dispose — pending for recovery or manual reconciliation (see step 3). Completing
+// a StateStoreFailure would throw — no record exists.
 if (result.Status is SmartConnectTransactionStatus.Accepted
 	or SmartConnectTransactionStatus.Declined
 	or SmartConnectTransactionStatus.Cancelled)
