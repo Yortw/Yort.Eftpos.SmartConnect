@@ -520,7 +520,7 @@ The library no longer finalizes a completed transaction's sentinel. On a complet
 returns the result with the record left **pending**; the consumer calls `UpdateCompletedAsync` only *after* it
 has durably recorded the outcome (persist-before-complete), then `RemoveAsync`. The library still closes the
 record itself on the paths a consumer cannot recover — a rejected or never-sent POST as `Failed`, poll
-exhaustion as `Unknown` — and a store-refused pre-POST attempt persisted no record at all; so the consumer
+exhaustion as `Unknown` *(exhaustion path superseded by Decision 13)* — and a store-refused pre-POST attempt persisted no record at all; so the consumer
 completes only the resolved outcomes it durably records, not every returned status. `RemoveAsync`'s terminal-only guard is
 unchanged. Scope is the completed-outcome path only — exhaustion (`MaxPollDuration`) still closes as
 `Unknown` *(superseded by Decision 13, which leaves an exhausted record pending too)*, and dispose already
@@ -580,7 +580,9 @@ live outcome to recover there. The consumer drains an exhaustion record via the 
 and stop tracking. No new API; `RemoveAsync`'s terminal-only guard unchanged; the returned result shape
 (`Unknown`/`None`) unchanged. There is no `CancellationToken` on the poll methods (Decision 3): dispose, not cancellation, is the sanctioned
 way to abandon a wait, and dispose too leaves the record pending — so no poll-loop exit drops a record that
-might still settle.
+might still settle. A companion change on this branch has the poll loop harvest the transaction id from poll
+bodies, so a non-completed exit (exhaustion, `PollingUrlInvalid`) now reports it on the resume path too, which
+previously seeded no id; the `Status`/`FailureCause` shape is unchanged.
 
 ### Rationale
 
