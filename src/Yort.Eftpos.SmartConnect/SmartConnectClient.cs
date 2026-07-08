@@ -182,7 +182,12 @@ public sealed class SmartConnectClient : IDisposable
 	/// <remarks>There is deliberately no <see cref="System.Threading.CancellationToken"/> (ADR Decision 3): the
 	/// transaction cannot be recalled once sent, so abandoning the wait would only orphan a possibly-live payment.
 	/// A wait that exceeds the internal maximum poll duration returns <see cref="SmartConnectTransactionStatus.Unknown"/>;
-	/// to abandon a wait during shutdown, dispose the client and resume from the persisted polling URL after restart.</remarks>
+	/// to abandon a wait during shutdown, dispose the client and resume from the persisted polling URL after restart.
+	/// <para>On a terminal outcome the library leaves the recovery record PENDING and returns the result; it does
+	/// NOT mark completion. Persist the outcome durably, then call
+	/// <see cref="ISmartConnectTransactionState.UpdateCompletedAsync"/> to complete the record. If the consumer
+	/// crashes in between, the record stays pending and recovery replays the same outcome — so persist
+	/// idempotently by <c>ClientTransactionRef</c>.</para></remarks>
 	/// <param name="request">The transaction to process. <c>ClientTransactionRef</c> must be stable across a
 	/// restart for the same logical transaction — it is the crash-recovery key.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
