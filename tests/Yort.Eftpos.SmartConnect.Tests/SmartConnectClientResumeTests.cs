@@ -230,12 +230,11 @@ public class SmartConnectClientResumeTests
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
 		// (F5) No transport cause leaks on the resume path either.
 		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
-		// (F5, weakened) ResumePollingAsync has no transactionId parameter and never looks the persisted
-		// TransactionId up from the store (by design — see Resume_NeverCallsSaveOrUpdatePollingDetails), so
-		// PollForResultAsync's transactionId local is null for the entire resume flow, and the exhaustion result
-		// echoes it verbatim as null. This is pre-existing/out of scope for this task (which only changes whether
-		// the sentinel is finalized) — pinning actual behaviour rather than asserting the not-yet-true "txn-1".
-		Assert.Null(result.TransactionId);
+		// ResumePollingAsync has no transactionId parameter and never looks the persisted TransactionId up from
+		// the store (by design — see Resume_NeverCallsSaveOrUpdatePollingDetails), so PollForResultAsync seeds
+		// its transactionId local as null. The poll loop harvests the id from each poll body instead, so the
+		// exhaustion result still carries the id the PENDING poll body reported ("txn-1" in PendingPollJson).
+		Assert.Equal("txn-1", result.TransactionId);
 		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
 		Assert.Null(store.Records[Ref].Status);
 		Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);

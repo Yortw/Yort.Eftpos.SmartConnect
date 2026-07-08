@@ -891,6 +891,10 @@ public sealed class SmartConnectClient : IDisposable
 					// A successful poll resets the 429 backoff to the configured interval.
 					backoffInterval = _pollInterval;
 
+					// Harvest the transaction id every poll carries so a non-completed exit (exhaustion,
+					// PollingUrlInvalid) reports it even on the resume path, which seeds no id.
+					transactionId = poll.TransactionId ?? transactionId;
+
 					if (poll.Progress == PollProgress.Completed)
 					{
 						var result = poll.Result!;
