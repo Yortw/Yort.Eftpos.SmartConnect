@@ -155,7 +155,10 @@ public class SmartConnectClientPollingTests
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
 		Assert.Equal(3, progress.Reports.Count(r => r.State == SmartConnectPollingState.Polling));
-		Assert.Contains("UpdateCompleted:" + Ref + ":Accepted", store.CallLog);
+		// (Case C) The library no longer finalizes on a completed outcome — it leaves the sentinel pending for
+		// the consumer to complete after durably persisting. Recovery replays it if the consumer crashes first.
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Fact]
@@ -194,7 +197,10 @@ public class SmartConnectClientPollingTests
 
 		Assert.Equal(SmartConnectTransactionStatus.Declined, result.Status);
 		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
-		Assert.Contains("UpdateCompleted:" + Ref + ":Declined", store.CallLog);
+		// (Case C) The library no longer finalizes on a completed outcome — it leaves the sentinel pending for
+		// the consumer to complete after durably persisting. Recovery replays it if the consumer crashes first.
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Fact]
@@ -335,9 +341,12 @@ public class SmartConnectClientPollingTests
 	}
 
 	[Fact]
-	public async Task Poll_UpdateCompletedThrowsAtTerminal_ResultStillReturned()
+	public async Task Poll_Completed_NeverInvokesUpdateCompleted_EvenWhenStoreWouldThrow()
 	{
-		// (R3) A persistence failure never masks an outcome the library holds; (G6) the cause stays None.
+		// (Case C) The completed-outcome path no longer calls UpdateCompletedAsync at all — the sentinel is
+		// left pending for the consumer. A store armed to throw on UpdateCompletedAsync would surface that
+		// throw as a Warning (or a StateStoreFailure) if the path ever called it; asserting the result still
+		// returns Accepted with no Warning and the sentinel still pending is the reintroduction guard.
 		var store = new InMemoryTransactionStateStore { ThrowOnUpdateCompleted = new System.IO.IOException("store down") };
 		var handler = SequencedHandler(() => Json(HttpStatusCode.OK, AcceptedPollJson));
 		var logger = new ListLogger();
@@ -347,7 +356,8 @@ public class SmartConnectClientPollingTests
 
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		Assert.NotEqual(SmartConnectFailureCause.StateStoreFailure, result.FailureCause);
-		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+		Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Warning);
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Fact]
@@ -412,7 +422,10 @@ public class SmartConnectClientPollingTests
 		var result = await client.ProcessTransactionAsync(CreateRequest());
 
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
-		Assert.Contains("UpdateCompleted:" + Ref + ":Accepted", store.CallLog);
+		// (Case C) The library no longer finalizes on a completed outcome — it leaves the sentinel pending for
+		// the consumer to complete after durably persisting. Recovery replays it if the consumer crashes first.
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Theory]

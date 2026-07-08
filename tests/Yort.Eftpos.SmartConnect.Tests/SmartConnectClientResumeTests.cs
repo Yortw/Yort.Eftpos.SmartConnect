@@ -116,15 +116,54 @@ public class SmartConnectClientResumeTests
 	}
 
 	[Fact]
-	public async Task Resume_CallsUpdateCompletedOnCompletion()
+	public async Task Resume_LeavesSentinelPendingOnCompletion()
 	{
+		// (Case C) The library no longer finalizes on a completed outcome — it leaves the sentinel pending for
+		// the consumer to complete after durably persisting. Recovery replays it if the consumer crashes first.
 		var store = StoreWithPendingSentinel();
 		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson)));
 		using var client = CreateClient(handler, store);
 
-		await client.ResumePollingAsync(PollUrl, Ref);
+		var result = await client.ResumePollingAsync(PollUrl, Ref);
 
-		Assert.Contains("UpdateCompleted:" + Ref + ":Accepted", store.CallLog);
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
+	}
+
+	[Fact]
+	public async Task Resume_CompletedButNotFinalized_ReplaysTheSameOutcome_UntilConsumerCompletes()
+	{
+		// (Case C) The library leaves a completed transaction pending. If the consumer crashes before it marks
+		// completion, the row is still pending, so a second resume — via a FRESH client, as after a process
+		// restart — re-polls and replays the SAME terminal outcome. Only the consumer's UpdateCompletedAsync
+		// (after durable persist) moves it out of the pending scan. This pins the money-safety requirement
+		// (recoverable from durable state alone, F6) and that completing an already-completed record is
+		// idempotent (F7).
+		var store = StoreWithPendingSentinel();
+		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson)));
+
+		using (var client = CreateClient(handler, store))
+		{
+			var first = await client.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Accepted, first.Status);
+			Assert.Null(store.Records[Ref].Status);                                  // library did not finalize
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
+
+		// Fresh client = process restart: its only knowledge is the durable store row + polling URL.
+		using (var client2 = CreateClient(handler, store))
+		{
+			var replay = await client2.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Accepted, replay.Status);
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+
+			await store.UpdateCompletedAsync(Ref, replay.Status);                    // consumer persisted → complete
+			Assert.DoesNotContain(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+
+			await store.UpdateCompletedAsync(Ref, replay.Status);                    // idempotent double-complete
+			Assert.DoesNotContain(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
 	}
 
 	[Theory]

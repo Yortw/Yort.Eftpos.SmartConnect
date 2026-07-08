@@ -502,6 +502,58 @@ is exactly what surfaced the over-broad original line.
 
 ---
 
+## Decision 12: The consumer finalizes the recovery sentinel (Case C)
+
+**Status:** Accepted 2026-07-08. Extends Decision 10's recovery model.
+
+### Context
+
+The completed-outcome path finalized the sentinel (moved it out of the pending/recovery scan) *before*
+returning the result. A consumer that records the outcome after the return — e.g. via a downstream event or
+decorator — can crash between the return and that durable write. Because the record is no longer pending,
+crash recovery never re-surfaces it, and a real outcome (an approval the customer was charged for, or a
+decline) is silently lost. "Returned" was being treated as "durably delivered".
+
+### Decision
+
+The library no longer finalizes a completed transaction's sentinel. On a completed-outcome poll result it
+returns the result with the record left **pending**; the consumer calls `UpdateCompletedAsync` only *after* it
+has durably recorded the outcome (persist-before-complete), then `RemoveAsync`. The library still closes the
+record itself on the paths a consumer cannot recover — a rejected or never-sent POST as `Failed`, poll
+exhaustion as `Unknown` — and a store-refused pre-POST attempt persisted no record at all; so the consumer
+completes only the resolved outcomes it durably records, not every returned status. `RemoveAsync`'s terminal-only guard is
+unchanged. Scope is the completed-outcome path only — exhaustion (`MaxPollDuration`) still closes as
+`Unknown`, and dispose already leaves the record pending.
+
+### Rationale
+
+A completed transaction's polling URL is idempotently re-pollable, so a pending record is replayable: a crash
+before the consumer finalizes just means recovery re-polls and re-delivers the same outcome. Deferring the
+finalize to after the consumer's durable write closes the window structurally rather than alerting on its
+symptom. Self-healing: a failed `UpdateCompletedAsync` after a good persist is retried by replay.
+
+### Trade-offs Accepted
+
+- The library no longer guarantees the pending set drains — that is now the consumer's responsibility. A
+  consumer that never calls `UpdateCompletedAsync` accumulates pending records that recovery re-polls on every
+  pass; consumers should monitor pending-record age.
+- The pending window now spans return→consumer-complete, so a consumer's recovery sweep can overlap a live
+  operation for the same reference and re-deliver. Idempotent-by-`clientTransactionRef` persistence is the
+  required mitigation; the library deliberately does not serialize (it is stateless per call).
+- Moving completion ownership to the consumer is a contract change to `ISmartConnectTransactionState` affecting
+  every consumer.
+
+### Options Considered
+
+| Option | Verdict | Reason |
+|---|---|---|
+| **Consumer finalizes (return + explicit complete)** | **Selected** | Closes the window structurally; fits a return-based consumer as a reorder; the consumer can make persist+complete atomic; no new API, no guard change |
+| Callback/event delivery (library invokes a handler, finalizes on its success) | Rejected | Needs a consumer-side persist-confirmation point the library can call back into; forces control inversion and a persistence-pipeline restructure; returning a result alongside re-invites the loss |
+| Non-breaking new "return-without-closing" entry point | Rejected | Spends permanent API surface to avoid a break that is free pre-1.0 with no stable consumers |
+| Uniform "library never finalizes" (incl. the exhaustion path) | Deferred | Kept this change surgical to the completed-outcome money-loss window; the completed-vs-exhaustion asymmetry (and the recovery-exhaustion window) is a separate, larger decision |
+
+---
+
 ## Decisions Explicitly Deferred
 
 | Topic | Why deferred |
