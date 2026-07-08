@@ -80,7 +80,7 @@ internal static class TransactionResponseParser
 				return new PollResult
 				{
 					Progress = PollProgress.Completed,
-					Result = new SmartConnectTransactionResult { Status = SmartConnectTransactionStatus.Unknown }
+					Result = new SmartConnectTransactionResult { Status = SmartConnectTransactionStatus.Unknown, TransactionId = GetString(root, "transactionId") }
 				};
 			}
 

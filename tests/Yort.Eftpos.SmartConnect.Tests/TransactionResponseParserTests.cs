@@ -149,6 +149,17 @@ public class TransactionResponseParserTests
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, poll.Result!.Status);
 	}
 
+	// The ambiguous-outcome case is exactly where a consumer most needs the id for reconciliation — it must
+	// carry the envelope transactionId just like the with-data COMPLETED branch does.
+	[Fact]
+	public void ParsePoll_CompletedButNoData_SurfacesEnvelopeTransactionId()
+	{
+		var json = @"{ ""transactionStatus"": ""COMPLETED"", ""transactionId"": ""amb-999"" }";
+		var poll = TransactionResponseParser.ParsePollResponse(json);
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, poll.Result!.Status);
+		Assert.Equal("amb-999", poll.Result.TransactionId);
+	}
+
 	// A COMPLETED accept with a MALFORMED amount must not be lost: the amount defaults, the outcome still
 	// surfaces. (Otherwise the parse throws, the poll loop treats it as garbled, and a real Accepted degrades
 	// to Unknown after spinning to timeout.)

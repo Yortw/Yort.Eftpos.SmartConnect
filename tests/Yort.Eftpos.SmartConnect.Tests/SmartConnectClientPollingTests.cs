@@ -29,6 +29,10 @@ public class SmartConnectClientPollingTests
 
 	private const string PendingPollJson = "{\"transactionId\": \"txn-1\", \"transactionStatus\": \"PENDING\", \"data\": {}}";
 
+	// Omits the envelope transactionId entirely — every other pending fixture carries one, so nothing else
+	// exercises the `?? transactionId` keep-seed arm of the poll loop's harvest.
+	private const string PendingPollJsonNoId = "{\"transactionStatus\": \"PENDING\", \"data\": {}}";
+
 	private const string DelayedPollJson =
 		"{\"transactionId\": \"txn-1\", \"transactionStatus\": \"PENDING\", \"data\": {\"TransactionResult\": \"OK-DELAYED\"}}";
 
@@ -247,6 +251,25 @@ public class SmartConnectClientPollingTests
 		// (F5) Result shape preserved: TransactionId must not be dropped (it is the consumer's reconciliation key).
 		Assert.Equal("txn-1", result.TransactionId);
 		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
+	}
+
+	[Fact]
+	public async Task Poll_ExhaustsWithPollBodiesOmittingTransactionId_KeepsSeededTransactionId()
+	{
+		// Pins the `?? transactionId` keep-seed arm in the poll loop's harvest (SmartConnectClient.cs):
+		// `transactionId = poll.TransactionId ?? transactionId;`. Every pending fixture elsewhere in this
+		// suite carries a transactionId that matches the seed, so overwriting unconditionally with
+		// `poll.TransactionId` would still pass them all — only a body that OMITS the id exposes the bug
+		// (the seeded id would be silently nulled on exhaustion).
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(() => Json(HttpStatusCode.OK, PendingPollJsonNoId));
+		using var client = CreateClient(handler, store, maxPollDuration: TimeSpan.FromSeconds(10));
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+		// "txn-1" is InitialResponseJson's transactionId — the seed the harvest must preserve.
+		Assert.Equal("txn-1", result.TransactionId);
 	}
 
 	[Fact]
