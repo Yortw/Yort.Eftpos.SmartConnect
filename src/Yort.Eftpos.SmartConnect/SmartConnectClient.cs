@@ -802,14 +802,15 @@ public sealed class SmartConnectClient : IDisposable
 			var disposed = _disposed;
 			if (disposed || Clock() >= deadline)
 			{
-				// Two UNKNOWN exits, disposed differently:
-				//  - Genuine exhaustion (deadline): the live caller receives Unknown and owns reconciliation,
-				//    so the sentinel closes as Unknown (distinct from POST-phase TransportUnknown, where no
-				//    response ever arrived). An Error.
+				// Two UNKNOWN exits, both leaving the record PENDING (Decision 13 — the library never finalizes;
+				// the consumer owns the pending set). They differ only in log level:
+				//  - Genuine exhaustion (deadline): Unknown is a TIMELINESS signal to the live caller (stop making
+				//    the customer wait), NOT a verdict that the transaction is dead. It may still settle, so the
+				//    record stays pending for a later recovery pass to re-poll and deliver the real outcome.
+				//    Operationally actionable — an Error.
 				//  - Dispose (host shutdown): the caller is going away and the returned Unknown may never be
-				//    observed, so the sentinel is LEFT PENDING — that pending record is the only thing that
-				//    lets ResumePollingAsync recover the outcome after restart, which is the flow
-				//    ProcessTransactionAsync's remarks direct the host to use. A deliberate action — Warning.
+				//    observed; the pending record is what lets ResumePollingAsync recover after restart. Routine —
+				//    a Warning.
 				SafeLog(
 					disposed ? LogLevel.Warning : LogLevel.Error,
 					null,
@@ -817,10 +818,6 @@ public sealed class SmartConnectClient : IDisposable
 					clientTransactionRef ?? "(journal query)",
 					(int)(Clock() - startedAt).TotalSeconds,
 					disposed ? "client disposed" : "MaxPollDuration exceeded");
-				if (!disposed && clientTransactionRef != null)
-				{
-					await CloseSentinelQuietlyAsync(clientTransactionRef, SmartConnectTransactionStatus.Unknown).ConfigureAwait(false);
-				}
 
 				return new SmartConnectTransactionResult
 				{

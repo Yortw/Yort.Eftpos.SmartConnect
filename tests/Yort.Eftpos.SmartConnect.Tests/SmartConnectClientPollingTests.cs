@@ -220,8 +220,11 @@ public class SmartConnectClientPollingTests
 	}
 
 	[Fact]
-	public async Task Poll_Timeout_ReturnsUnknownAndClosesSentinelUnknown()
+	public async Task Poll_Timeout_ReturnsUnknown_LeavesSentinelPending()
 	{
+		// (Decision 13) Poll exhaustion is a TIMELINESS boundary for the live caller, not a verdict that the
+		// transaction is dead. The caller still gets Unknown immediately, but the library no longer finalizes:
+		// the record is left PENDING so a later recovery pass can re-poll and discover a late-settling outcome.
 		var store = new InMemoryTransactionStateStore();
 		var handler = SequencedHandler(() => Json(HttpStatusCode.OK, PendingPollJson));
 		var logger = new ListLogger();
@@ -229,10 +232,20 @@ public class SmartConnectClientPollingTests
 
 		var result = await client.ProcessTransactionAsync(CreateRequest());
 
+		// Invariant that must NOT change: a timeout still surfaces Unknown to the caller (never a silent success).
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
 		// Distinguishable from POST-phase TransportUnknown — poll exhaustion carries no transport cause.
 		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
-		Assert.Contains("UpdateCompleted:" + Ref + ":Unknown", store.CallLog);
+		// The change: the library did NOT finalize — no UpdateCompleted call, record stays pending.
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
+		// (F4) "Not finalized" is not enough — prove the record is actually RECOVERABLE: present in the pending
+		// scan with the polling URL a later resume needs. A record that is unfinalized but absent from the scan
+		// (or missing its URL) passes the Status-null check while the outcome is still lost.
+		Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		Assert.False(string.IsNullOrEmpty(store.Records[Ref].PollingUrl));
+		// (F5) Result shape preserved: TransactionId must not be dropped (it is the consumer's reconciliation key).
+		Assert.Equal("txn-1", result.TransactionId);
 		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
 	}
 

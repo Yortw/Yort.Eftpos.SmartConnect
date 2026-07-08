@@ -216,8 +216,11 @@ public class SmartConnectClientResumeTests
 	}
 
 	[Fact]
-	public async Task Resume_Timeout_ReturnsUnknownAndClosesSentinel()
+	public async Task Resume_Timeout_ReturnsUnknown_LeavesSentinelPending()
 	{
+		// (Decision 13) A recovery resume that itself exhausts must NOT drop the record from the pending scan —
+		// otherwise the next recovery pass never retries a transaction that may settle moments later (the
+		// recovery-exhaustion window). Caller still gets Unknown; record stays pending.
 		var store = StoreWithPendingSentinel();
 		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, PendingPollJson)));
 		using var client = CreateClient(handler, store);
@@ -225,7 +228,17 @@ public class SmartConnectClientResumeTests
 		var result = await client.ResumePollingAsync(PollUrl, Ref);
 
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
-		Assert.Contains("UpdateCompleted:" + Ref + ":Unknown", store.CallLog);
+		// (F5) No transport cause leaks on the resume path either.
+		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
+		// (F5, weakened) ResumePollingAsync has no transactionId parameter and never looks the persisted
+		// TransactionId up from the store (by design — see Resume_NeverCallsSaveOrUpdatePollingDetails), so
+		// PollForResultAsync's transactionId local is null for the entire resume flow, and the exhaustion result
+		// echoes it verbatim as null. This is pre-existing/out of scope for this task (which only changes whether
+		// the sentinel is finalized) — pinning actual behaviour rather than asserting the not-yet-true "txn-1".
+		Assert.Null(result.TransactionId);
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
+		Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
 	}
 
 	[Theory]
