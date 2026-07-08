@@ -341,11 +341,12 @@ public class SmartConnectClientPollingTests
 	}
 
 	[Fact]
-	public async Task Poll_UpdateCompletedThrowsAtTerminal_ResultStillReturned()
+	public async Task Poll_Completed_NeverInvokesUpdateCompleted_EvenWhenStoreWouldThrow()
 	{
 		// (Case C) The completed-outcome path no longer calls UpdateCompletedAsync at all — the sentinel is
-		// left pending for the consumer — so a store configured to throw on it is simply never invoked: the
-		// result still returns normally, no warning is logged, and the sentinel stays pending for recovery.
+		// left pending for the consumer. A store armed to throw on UpdateCompletedAsync would surface that
+		// throw as a Warning (or a StateStoreFailure) if the path ever called it; asserting the result still
+		// returns Accepted with no Warning and the sentinel still pending is the reintroduction guard.
 		var store = new InMemoryTransactionStateStore { ThrowOnUpdateCompleted = new System.IO.IOException("store down") };
 		var handler = SequencedHandler(() => Json(HttpStatusCode.OK, AcceptedPollJson));
 		var logger = new ListLogger();

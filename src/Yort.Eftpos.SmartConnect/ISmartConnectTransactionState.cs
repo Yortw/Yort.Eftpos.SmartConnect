@@ -12,10 +12,13 @@ namespace Yort.Eftpos.SmartConnect;
 /// </summary>
 /// <remarks>
 /// <para>The lifecycle is: <see cref="SaveTransactionAttemptAsync"/> (before the POST) →
-/// <see cref="UpdatePollingDetailsAsync"/> (once the polling URL is received). The client does NOT mark
-/// completion: on a terminal outcome it returns the result with the record left pending. The <b>consumer</b>
-/// calls <see cref="UpdateCompletedAsync"/> only AFTER it has durably recorded the outcome
-/// (persist-before-complete), then <see cref="RemoveAsync"/> once done. "Pending" is the absence of
+/// <see cref="UpdatePollingDetailsAsync"/> (once the polling URL is received). For a <b>completed</b> outcome
+/// delivered by polling (Accepted/Declined/Cancelled and the like) the client does NOT mark completion — it
+/// returns the result with the record left pending, and the <b>consumer</b> calls
+/// <see cref="UpdateCompletedAsync"/> only AFTER it has durably recorded the outcome (persist-before-complete),
+/// then <see cref="RemoveAsync"/> once done. (The client still closes the record itself on the paths the
+/// consumer cannot recover: a rejected or never-sent POST completes it <c>Failed</c>, poll exhaustion completes
+/// it <c>Unknown</c>, and a store-refused pre-POST attempt persisted no record at all.) "Pending" is the absence of
 /// completion. Because recovery can re-poll and re-deliver a still-pending completed transaction, the
 /// consumer's outcome persistence MUST be idempotent by <c>clientTransactionRef</c>. A consumer that never
 /// calls <see cref="UpdateCompletedAsync"/> leaves the record pending indefinitely, so every recovery pass
@@ -49,10 +52,12 @@ public interface ISmartConnectTransactionState
 	/// </summary>
 	Task UpdatePollingDetailsAsync(string clientTransactionRef, string pollingUrl, string transactionId);
 
-	/// <summary>Records that the transaction reached the given terminal <paramref name="status"/>. The client
-	/// does not call this — the consumer calls it after durably persisting the outcome, which moves the record
-	/// out of <see cref="GetPendingTransactionsAsync"/>. Calling it on an already-completed record is permitted
-	/// and idempotent (recovery replay and consumer-side deployment skew both reach this).</summary>
+	/// <summary>Records that the transaction reached the given terminal <paramref name="status"/>. For a completed
+	/// outcome delivered by polling the client does not call this — the consumer calls it after durably persisting
+	/// the outcome, which moves the record out of <see cref="GetPendingTransactionsAsync"/>. (The client does call
+	/// it itself when it closes a record the consumer cannot recover — a rejected/never-sent POST as <c>Failed</c>,
+	/// poll exhaustion as <c>Unknown</c>.) Calling it on an already-completed record is permitted and idempotent
+	/// (recovery replay and consumer-side deployment skew both reach this).</summary>
 	Task UpdateCompletedAsync(string clientTransactionRef, SmartConnectTransactionStatus status);
 
 	/// <summary>Returns all transactions that have not reached a terminal state. Used during crash recovery.</summary>

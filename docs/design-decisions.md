@@ -516,9 +516,12 @@ decline) is silently lost. "Returned" was being treated as "durably delivered".
 
 ### Decision
 
-The library no longer finalizes a completed transaction's sentinel. On a terminal outcome it returns the
-result with the record left **pending**; the consumer calls `UpdateCompletedAsync` only *after* it has durably
-recorded the outcome (persist-before-complete), then `RemoveAsync`. `RemoveAsync`'s terminal-only guard is
+The library no longer finalizes a completed transaction's sentinel. On a completed-outcome poll result it
+returns the result with the record left **pending**; the consumer calls `UpdateCompletedAsync` only *after* it
+has durably recorded the outcome (persist-before-complete), then `RemoveAsync`. The library still closes the
+record itself on the paths a consumer cannot recover — a rejected or never-sent POST as `Failed`, poll
+exhaustion as `Unknown` — and a store-refused pre-POST attempt persisted no record at all; so the consumer
+completes only the resolved outcomes it durably records, not every returned status. `RemoveAsync`'s terminal-only guard is
 unchanged. Scope is the completed-outcome path only — exhaustion (`MaxPollDuration`) still closes as
 `Unknown`, and dispose already leaves the record pending.
 

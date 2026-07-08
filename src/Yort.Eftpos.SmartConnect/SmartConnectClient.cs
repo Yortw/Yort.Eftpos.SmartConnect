@@ -183,11 +183,15 @@ public sealed class SmartConnectClient : IDisposable
 	/// transaction cannot be recalled once sent, so abandoning the wait would only orphan a possibly-live payment.
 	/// A wait that exceeds the internal maximum poll duration returns <see cref="SmartConnectTransactionStatus.Unknown"/>;
 	/// to abandon a wait during shutdown, dispose the client and resume from the persisted polling URL after restart.
-	/// <para>On a terminal outcome the library leaves the recovery record PENDING and returns the result; it does
-	/// NOT mark completion. Persist the outcome durably, then call
-	/// <see cref="ISmartConnectTransactionState.UpdateCompletedAsync"/> to complete the record. If the consumer
-	/// crashes in between, the record stays pending and recovery replays the same outcome — so persist
-	/// idempotently by <c>ClientTransactionRef</c>.</para></remarks>
+	/// <para>On a <b>completed</b> outcome delivered by polling (Accepted/Declined/Cancelled and the like) the
+	/// library leaves the recovery record PENDING and returns the result; it does NOT mark completion. Persist the
+	/// outcome durably, then call <see cref="ISmartConnectTransactionState.UpdateCompletedAsync"/> to complete the
+	/// record. If the consumer crashes in between, the record stays pending and recovery replays the same outcome —
+	/// so persist idempotently by <c>ClientTransactionRef</c>. The library still closes the record itself on the
+	/// paths the consumer cannot recover: a rejected or never-sent POST completes it <c>Failed</c>, and poll
+	/// exhaustion completes it <c>Unknown</c> (a store-refused pre-POST attempt persisted no record at all). So do
+	/// NOT blanket-call <see cref="ISmartConnectTransactionState.UpdateCompletedAsync"/> for every returned
+	/// status — only for a resolved outcome you have durably recorded.</para></remarks>
 	/// <param name="request">The transaction to process. <c>ClientTransactionRef</c> must be stable across a
 	/// restart for the same logical transaction — it is the crash-recovery key.</param>
 	/// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
@@ -899,7 +903,9 @@ public sealed class SmartConnectClient : IDisposable
 						// durably persisted the outcome (persist-before-complete). If the consumer crashes in between,
 						// the row is still pending, so recovery re-polls this same terminal result and replays it. The
 						// caller must persist idempotently by clientTransactionRef, since replay can re-deliver.
-						SafeLog(LogLevel.Information, null, "Terminal state {Status} for {ClientTransactionRef} (transactionId {TransactionId}) — sentinel left pending for consumer completion.", result.Status, clientTransactionRef ?? "(journal query)", result.TransactionId);
+						// Journal queries carry no clientTransactionRef and have no sentinel, so only the transaction
+						// path claims a pending sentinel in the log.
+						SafeLog(LogLevel.Information, null, "Terminal state {Status} for {ClientTransactionRef} (transactionId {TransactionId}){SentinelNote}.", result.Status, clientTransactionRef ?? "(journal query)", result.TransactionId, clientTransactionRef != null ? " — sentinel left pending for consumer completion" : string.Empty);
 						return result;
 					}
 

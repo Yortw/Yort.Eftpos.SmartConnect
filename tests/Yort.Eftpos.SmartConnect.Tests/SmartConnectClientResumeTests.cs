@@ -124,8 +124,9 @@ public class SmartConnectClientResumeTests
 		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson)));
 		using var client = CreateClient(handler, store);
 
-		await client.ResumePollingAsync(PollUrl, Ref);
+		var result = await client.ResumePollingAsync(PollUrl, Ref);
 
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
 		Assert.Null(store.Records[Ref].Status);
 	}
