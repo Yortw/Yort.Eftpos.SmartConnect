@@ -550,7 +550,61 @@ symptom. Self-healing: a failed `UpdateCompletedAsync` after a good persist is r
 | **Consumer finalizes (return + explicit complete)** | **Selected** | Closes the window structurally; fits a return-based consumer as a reorder; the consumer can make persist+complete atomic; no new API, no guard change |
 | Callback/event delivery (library invokes a handler, finalizes on its success) | Rejected | Needs a consumer-side persist-confirmation point the library can call back into; forces control inversion and a persistence-pipeline restructure; returning a result alongside re-invites the loss |
 | Non-breaking new "return-without-closing" entry point | Rejected | Spends permanent API surface to avoid a break that is free pre-1.0 with no stable consumers |
-| Uniform "library never finalizes" (incl. the exhaustion path) | Deferred | Kept this change surgical to the completed-outcome money-loss window; the completed-vs-exhaustion asymmetry (and the recovery-exhaustion window) is a separate, larger decision |
+| Uniform "library never finalizes" (incl. the exhaustion path) | Done — see Decision 13 | Followed up immediately after Case C: extends leave-pending to poll exhaustion, closing the recovery-exhaustion window |
+
+---
+
+## Decision 13: The library never finalizes on poll exhaustion either (uniform never-finalize)
+
+**Status:** Accepted 2026-07-08. Completes Decision 12's deferred scope (ii).
+
+### Context
+
+Decision 12 stopped the library finalizing the sentinel on the completed-outcome path but left the
+poll-exhaustion (`MaxPollDuration`) path finalizing the record as `Unknown`. Both `ProcessTransactionAsync` and
+`ResumePollingAsync` share the poll loop, so a recovery resume that itself exhausts (a slow pinpad or a network
+outage) closed the record and dropped it from the pending scan — the next recovery pass never retried it, even
+though the transaction might settle moments later. A real late outcome was silently lost: the recovery-exhaustion
+window.
+
+### Decision
+
+The exhaustion branch no longer finalizes. It returns `Unknown` and leaves the record pending, on both the
+first-poll and resume paths. The rule is now uniform: the library never finalizes a record; the consumer owns
+the pending set (dispose, POST-phase `TransportUnknown`, `PollingUrlInvalid`, completed outcomes, and now poll
+exhaustion all leave it pending). The consumer drains an exhaustion record via the existing `UpdateCompletedAsync`
+— a real status once a later recovery poll or reconciliation supplies one, or `Unknown` to accept the ambiguity
+and stop tracking. No new API; `RemoveAsync`'s terminal-only guard unchanged; the returned result shape
+(`Unknown`/`None`) unchanged. There is no `CancellationToken` on the poll methods (Decision 3), so exhaustion and
+dispose are the only poll-loop exits that produce `Unknown`; both now leave the record pending, so "the library
+never finalizes" holds exhaustively — dispose, not cancellation, is the sanctioned way to abandon a wait.
+
+### Rationale
+
+Exhaustion is a timeliness boundary for the live caller ("stop making the customer wait"), not a verdict that
+the transaction is dead. Returning `Unknown` (timeliness) and leaving the record pending (durability) are
+separable concerns; keeping both lets the caller act immediately while recovery can still discover a late
+outcome. It closes the window structurally and collapses two finalization rules into one.
+
+### Trade-offs Accepted
+
+- A never-resolving exhaustion record is re-polled on every recovery pass (up to `MaxPollDuration` each) until the
+  consumer completes it — consumers must monitor pending-record age (the same duty Decision 12 introduced). That
+  duty is only dischargeable if the consumer's store records a per-record creation/last-attempt timestamp; the
+  interface does not require one, so the migration note calls this out (a minimal store modelling only the
+  interface fields cannot compute age).
+- The pending set no longer self-drains on exhaustion.
+- Reverses a doc clause shipped days earlier (the exhaustion carve-out added when Decision 12 landed) — the cost
+  of having scoped Decision 12 narrowly on purpose.
+
+### Options Considered
+
+| Option | Verdict | Reason |
+|---|---|---|
+| **Consumer-driven, library never finalizes on exhaustion** | **Selected** | Closes the recovery-exhaustion window; one uniform rule |
+| Bounded auto-close (finalize after N attempts / max age) | Rejected | Reintroduces the finalize-and-drop loss, just deferred; picks an arbitrary N |
+| Split contract (completed consumer-finalized, exhaustion library-finalized = status quo) | Rejected | Leaves the recovery-exhaustion window open |
+| Distinct "abandon as unresolved" store signal (vs completing as `Unknown`) | Rejected (YAGNI) | The completion status already carries the distinction; add only if a consumer needs to branch on it |
 
 ---
 
