@@ -11,7 +11,7 @@
        This package versions independently of the WinForms companion. -->
   <PropertyGroup>
     <PackageId>Yort.Eftpos.SmartConnect</PackageId>
-    <Version>0.1.0-preview.6</Version>
+    <Version>0.1.0-preview.7</Version>
     <Description>Unofficial .NET client for the SmartPay / Shift4 SmartConnect (New Zealand) EFTPOS cloud REST API: pairs a POS register to a payment terminal and processes card transactions via an asynchronous polling model, with crash-recovery state and HTTP 429 backoff. Not affiliated with or endorsed by Shift4 / SmartPay.</Description>
     <PackageTags>eftpos;smartconnect;smartpay;shift4;payments;nz;pos</PackageTags>
   </PropertyGroup>
