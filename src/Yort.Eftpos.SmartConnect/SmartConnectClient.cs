@@ -797,8 +797,7 @@ public sealed class SmartConnectClient : IDisposable
 
 		while (true)
 		{
-			// Snapshot the volatile flag once so the log reason and the sentinel decision below cannot disagree
-			// on a torn read.
+			// Snapshot the volatile flag once so the log level and reason cannot disagree on a torn read.
 			var disposed = _disposed;
 			if (disposed || Clock() >= deadline)
 			{

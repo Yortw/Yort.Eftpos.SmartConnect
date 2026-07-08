@@ -56,9 +56,10 @@ public class SmartConnectClientDisposeTests
 	public async Task Dispose_DuringActivePoll_CompletesWithUnknownAndLeavesSentinelPending()
 	{
 		// Shutdown mid-transaction: the loop must notice the disposal, complete the task with Unknown (never
-		// hang the host's shutdown), and — unlike genuine poll exhaustion — LEAVE the sentinel pending. The
-		// host is going away, so the returned Unknown may never be observed; the pending record is what lets
-		// ResumePollingAsync recover the outcome after restart (ProcessTransactionAsync's documented flow).
+		// hang the host's shutdown), and LEAVE the sentinel pending. The host is going away, so the returned
+		// Unknown may never be observed; the pending record is what lets ResumePollingAsync recover the outcome
+		// after restart (ProcessTransactionAsync's documented flow). Distinct from genuine exhaustion only in
+		// log level (Warning vs Error) — both leave the record pending (Decision 13).
 		var store = new InMemoryTransactionStateStore();
 		var client = new SmartConnectClient(CreateConfiguration(PendingForeverHandler(), store));
 
