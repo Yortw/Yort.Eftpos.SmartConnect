@@ -187,9 +187,11 @@ public sealed class SmartConnectClient : IDisposable
 	/// library leaves the recovery record PENDING and returns the result; it does NOT mark completion. Persist the
 	/// outcome durably, then call <see cref="ISmartConnectTransactionState.UpdateCompletedAsync"/> to complete the
 	/// record. If the consumer crashes in between, the record stays pending and recovery replays the same outcome —
-	/// so persist idempotently by <c>ClientTransactionRef</c>. The library still closes the record itself on the
-	/// paths the consumer cannot recover: a rejected or never-sent POST completes it <c>Failed</c>, and poll
-	/// exhaustion completes it <c>Unknown</c> (a store-refused pre-POST attempt persisted no record at all). So do
+	/// so persist idempotently by <c>ClientTransactionRef</c>. The library still closes the record itself only on
+	/// a rejected or never-sent POST, which completes it <c>Failed</c> (a store-refused pre-POST attempt persisted
+	/// no record at all). Poll exhaustion (<see cref="SmartConnectClientConfiguration.MaxPollDuration"/>) no longer
+	/// finalizes: it returns <see cref="SmartConnectTransactionStatus.Unknown"/> as a timeliness signal but leaves
+	/// the record pending so recovery can still discover a late outcome (Decision 13). So do
 	/// NOT blanket-call <see cref="ISmartConnectTransactionState.UpdateCompletedAsync"/> for every returned
 	/// status — only for a resolved outcome you have durably recorded.</para></remarks>
 	/// <param name="request">The transaction to process. <c>ClientTransactionRef</c> must be stable across a
@@ -369,8 +371,8 @@ public sealed class SmartConnectClient : IDisposable
 	/// crash, so neither <c>SaveTransactionAttemptAsync</c> nor <c>UpdatePollingDetailsAsync</c> is called.
 	/// (Case C, ADR) <c>UpdateCompletedAsync</c> is NOT called on a completed outcome either — the sentinel is
 	/// left pending for the consumer to finalize after it durably persists the result, so a crash between
-	/// return and persistence can be recovered by resuming again. It IS still called (with <c>Unknown</c>) when
-	/// polling is exhausted, since that path is not a discoverable outcome to replay. Never throws for runtime
+	/// return and persistence can be recovered by resuming again. Poll exhaustion leaves the sentinel pending too
+	/// (Decision 13): a later recovery pass can still re-poll and discover the real outcome. Never throws for runtime
 	/// conditions — an expired OR malformed URL (present but not an absolute http(s) URI) surfaces as
 	/// <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>, meaning the outcome can no longer be determined
 	/// programmatically: resolve it by manual reconciliation. Only a null/blank URL throws (a missing argument).

@@ -16,9 +16,9 @@ namespace Yort.Eftpos.SmartConnect;
 /// delivered by polling (Accepted/Declined/Cancelled and the like) the client does NOT mark completion — it
 /// returns the result with the record left pending, and the <b>consumer</b> calls
 /// <see cref="UpdateCompletedAsync"/> only AFTER it has durably recorded the outcome (persist-before-complete),
-/// then <see cref="RemoveAsync"/> once done. (The client still closes the record itself on the paths the
-/// consumer cannot recover: a rejected or never-sent POST completes it <c>Failed</c>, poll exhaustion completes
-/// it <c>Unknown</c>, and a store-refused pre-POST attempt persisted no record at all.) "Pending" is the absence of
+/// then <see cref="RemoveAsync"/> once done. (The client still closes the record itself only on a rejected or
+/// never-sent POST, which completes it <c>Failed</c>; a store-refused pre-POST attempt persisted no record at
+/// all. Poll exhaustion no longer finalizes — it leaves the record pending, see Decision 13.) "Pending" is the absence of
 /// completion. Because recovery can re-poll and re-deliver a still-pending completed transaction, the
 /// consumer's outcome persistence MUST be idempotent by <c>clientTransactionRef</c>. A consumer that never
 /// calls <see cref="UpdateCompletedAsync"/> leaves the record pending indefinitely, so every recovery pass
@@ -55,9 +55,11 @@ public interface ISmartConnectTransactionState
 	/// <summary>Records that the transaction reached the given terminal <paramref name="status"/>. For a completed
 	/// outcome delivered by polling the client does not call this — the consumer calls it after durably persisting
 	/// the outcome, which moves the record out of <see cref="GetPendingTransactionsAsync"/>. (The client does call
-	/// it itself when it closes a record the consumer cannot recover — a rejected/never-sent POST as <c>Failed</c>,
-	/// poll exhaustion as <c>Unknown</c>.) Calling it on an already-completed record is permitted and idempotent
-	/// (recovery replay and consumer-side deployment skew both reach this).</summary>
+	/// it itself only when it closes a rejected/never-sent POST as <c>Failed</c>; poll exhaustion no longer
+	/// finalizes — see Decision 13.) Calling it on an already-completed record is permitted and idempotent
+	/// (recovery replay and consumer-side deployment skew both reach this). A consumer completing an
+	/// exhaustion-<c>Unknown</c> record may pass any resolved status, or <c>Unknown</c> to accept the ambiguity
+	/// and stop tracking.</summary>
 	Task UpdateCompletedAsync(string clientTransactionRef, SmartConnectTransactionStatus status);
 
 	/// <summary>Returns all transactions that have not reached a terminal state. Used during crash recovery.</summary>
