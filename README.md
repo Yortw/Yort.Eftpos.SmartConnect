@@ -116,6 +116,10 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 		// The library leaves this record pending too. On a real terminal status, durably record the outcome
 		// (idempotently — recovery may re-deliver a sale you already processed), THEN call
 		// configuration.StateStore.UpdateCompletedAsync(pending.ClientTransactionRef, recovered.Status).
+		// If this resume itself times out (recovered.Status == Unknown with no PollingUrlInvalid cause), the
+		// library leaves the record PENDING — do NOT complete it. The next recovery pass re-polls it, and a
+		// late-settling transaction is delivered then. Complete it yourself only once you have a real outcome
+		// (a later resume) or you have reconciled it (pass Unknown to accept the ambiguity and stop tracking).
 		// recovered.FailureCause == PollingUrlInvalid means the URL expired: the outcome is
 		// unknown — resolve it by manual reconciliation, then update the sentinel yourself.
 	}
