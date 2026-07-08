@@ -68,6 +68,15 @@ public class TransactionResponseParserTests
 		Assert.Equal(PollProgress.Pending, TransactionResponseParser.ParsePollResponse(PendingResponse).Progress);
 	}
 
+	// The pending/delayed branch has no Result (only a Completed poll does), so this is the only place the
+	// envelope id reaches a non-terminal poll — the poll loop harvests it from here so a caller that seeded
+	// no id (the resume path) still reports which transaction an exhaustion/PollingUrlInvalid exit concerns.
+	[Fact]
+	public void ParsePoll_Pending_SurfacesEnvelopeTransactionId()
+	{
+		Assert.Equal("f363c7de", TransactionResponseParser.ParsePollResponse(PendingResponse).TransactionId);
+	}
+
 	[Fact]
 	public void ParsePoll_Delayed_ReturnsDelayed()
 	{
@@ -138,6 +147,17 @@ public class TransactionResponseParserTests
 		var poll = TransactionResponseParser.ParsePollResponse(json);
 		Assert.Equal(PollProgress.Completed, poll.Progress);
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, poll.Result!.Status);
+	}
+
+	// The ambiguous-outcome case is exactly where a consumer most needs the id for reconciliation — it must
+	// carry the envelope transactionId just like the with-data COMPLETED branch does.
+	[Fact]
+	public void ParsePoll_CompletedButNoData_SurfacesEnvelopeTransactionId()
+	{
+		var json = @"{ ""transactionStatus"": ""COMPLETED"", ""transactionId"": ""amb-999"" }";
+		var poll = TransactionResponseParser.ParsePollResponse(json);
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, poll.Result!.Status);
+		Assert.Equal("amb-999", poll.Result.TransactionId);
 	}
 
 	// A COMPLETED accept with a MALFORMED amount must not be lost: the amount defaults, the outcome still

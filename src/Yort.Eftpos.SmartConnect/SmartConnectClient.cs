@@ -187,9 +187,11 @@ public sealed class SmartConnectClient : IDisposable
 	/// library leaves the recovery record PENDING and returns the result; it does NOT mark completion. Persist the
 	/// outcome durably, then call <see cref="ISmartConnectTransactionState.UpdateCompletedAsync"/> to complete the
 	/// record. If the consumer crashes in between, the record stays pending and recovery replays the same outcome —
-	/// so persist idempotently by <c>ClientTransactionRef</c>. The library still closes the record itself on the
-	/// paths the consumer cannot recover: a rejected or never-sent POST completes it <c>Failed</c>, and poll
-	/// exhaustion completes it <c>Unknown</c> (a store-refused pre-POST attempt persisted no record at all). So do
+	/// so persist idempotently by <c>ClientTransactionRef</c>. The library still closes the record itself only on
+	/// a rejected or never-sent POST, which completes it <c>Failed</c> (a store-refused pre-POST attempt persisted
+	/// no record at all). Poll exhaustion (<see cref="SmartConnectClientConfiguration.MaxPollDuration"/>) no longer
+	/// finalizes: it returns <see cref="SmartConnectTransactionStatus.Unknown"/> as a timeliness signal but leaves
+	/// the record pending so recovery can still discover a late outcome (Decision 13). So do
 	/// NOT blanket-call <see cref="ISmartConnectTransactionState.UpdateCompletedAsync"/> for every returned
 	/// status — only for a resolved outcome you have durably recorded.</para></remarks>
 	/// <param name="request">The transaction to process. <c>ClientTransactionRef</c> must be stable across a
@@ -369,8 +371,8 @@ public sealed class SmartConnectClient : IDisposable
 	/// crash, so neither <c>SaveTransactionAttemptAsync</c> nor <c>UpdatePollingDetailsAsync</c> is called.
 	/// (Case C, ADR) <c>UpdateCompletedAsync</c> is NOT called on a completed outcome either — the sentinel is
 	/// left pending for the consumer to finalize after it durably persists the result, so a crash between
-	/// return and persistence can be recovered by resuming again. It IS still called (with <c>Unknown</c>) when
-	/// polling is exhausted, since that path is not a discoverable outcome to replay. Never throws for runtime
+	/// return and persistence can be recovered by resuming again. Poll exhaustion leaves the sentinel pending too
+	/// (Decision 13): a later recovery pass can still re-poll and discover the real outcome. Never throws for runtime
 	/// conditions — an expired OR malformed URL (present but not an absolute http(s) URI) surfaces as
 	/// <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>, meaning the outcome can no longer be determined
 	/// programmatically: resolve it by manual reconciliation. Only a null/blank URL throws (a missing argument).
@@ -797,19 +799,19 @@ public sealed class SmartConnectClient : IDisposable
 
 		while (true)
 		{
-			// Snapshot the volatile flag once so the log reason and the sentinel decision below cannot disagree
-			// on a torn read.
+			// Snapshot the volatile flag once so the log level and reason cannot disagree on a torn read.
 			var disposed = _disposed;
 			if (disposed || Clock() >= deadline)
 			{
-				// Two UNKNOWN exits, disposed differently:
-				//  - Genuine exhaustion (deadline): the live caller receives Unknown and owns reconciliation,
-				//    so the sentinel closes as Unknown (distinct from POST-phase TransportUnknown, where no
-				//    response ever arrived). An Error.
+				// Two UNKNOWN exits, both leaving the record PENDING (Decision 13 — the library never finalizes;
+				// the consumer owns the pending set). They differ only in log level:
+				//  - Genuine exhaustion (deadline): Unknown is a TIMELINESS signal to the live caller (stop making
+				//    the customer wait), NOT a verdict that the transaction is dead. It may still settle, so the
+				//    record stays pending for a later recovery pass to re-poll and deliver the real outcome.
+				//    Operationally actionable — an Error.
 				//  - Dispose (host shutdown): the caller is going away and the returned Unknown may never be
-				//    observed, so the sentinel is LEFT PENDING — that pending record is the only thing that
-				//    lets ResumePollingAsync recover the outcome after restart, which is the flow
-				//    ProcessTransactionAsync's remarks direct the host to use. A deliberate action — Warning.
+				//    observed; the pending record is what lets ResumePollingAsync recover after restart. Routine —
+				//    a Warning.
 				SafeLog(
 					disposed ? LogLevel.Warning : LogLevel.Error,
 					null,
@@ -817,10 +819,6 @@ public sealed class SmartConnectClient : IDisposable
 					clientTransactionRef ?? "(journal query)",
 					(int)(Clock() - startedAt).TotalSeconds,
 					disposed ? "client disposed" : "MaxPollDuration exceeded");
-				if (!disposed && clientTransactionRef != null)
-				{
-					await CloseSentinelQuietlyAsync(clientTransactionRef, SmartConnectTransactionStatus.Unknown).ConfigureAwait(false);
-				}
 
 				return new SmartConnectTransactionResult
 				{
@@ -894,6 +892,10 @@ public sealed class SmartConnectClient : IDisposable
 
 					// A successful poll resets the 429 backoff to the configured interval.
 					backoffInterval = _pollInterval;
+
+					// Harvest the transaction id every poll carries so a non-completed exit (exhaustion,
+					// PollingUrlInvalid) reports it even on the resume path, which seeds no id.
+					transactionId = poll.TransactionId ?? transactionId;
 
 					if (poll.Progress == PollProgress.Completed)
 					{

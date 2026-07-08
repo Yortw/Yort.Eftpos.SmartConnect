@@ -166,6 +166,43 @@ public class SmartConnectClientResumeTests
 		}
 	}
 
+	[Fact]
+	public async Task Resume_ExhaustsWhilePending_LeavesSentinelPending_ThenLaterResumeDeliversTheSettledOutcome()
+	{
+		// (Decision 13) The recovery-exhaustion window, closed. The first resume polls a still-PENDING
+		// transaction until MaxPollDuration and returns Unknown, but leaves the record pending. When the
+		// transaction later settles, a subsequent resume — via a FRESH client, as after a process restart —
+		// re-polls the same URL, now gets the terminal outcome, and the consumer completes it. If exhaustion
+		// had finalized the record (pre-Decision-13), it would have dropped from the pending scan and the
+		// settled outcome would have been lost.
+		var store = StoreWithPendingSentinel();
+		var settled = false;
+		var handler = new MockHttpHandler(_ =>
+			Task.FromResult(Json(HttpStatusCode.OK, settled ? AcceptedPollJson : PendingPollJson)));
+
+		using (var client = CreateClient(handler, store))
+		{
+			var exhausted = await client.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Unknown, exhausted.Status);   // timeliness signal
+			Assert.Null(store.Records[Ref].Status);                                  // library did NOT finalize
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
+
+		// The transaction settles after we gave up waiting.
+		settled = true;
+
+		// Fresh client = process restart: only knowledge is the durable store row + polling URL.
+		using (var client2 = CreateClient(handler, store))
+		{
+			var recovered = await client2.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Accepted, recovered.Status);  // late outcome recovered
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+
+			await store.UpdateCompletedAsync(Ref, recovered.Status);                 // consumer persisted -> complete
+			Assert.DoesNotContain(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
+	}
+
 	[Theory]
 	[InlineData(HttpStatusCode.Unauthorized)]
 	[InlineData(HttpStatusCode.Forbidden)]
@@ -216,8 +253,11 @@ public class SmartConnectClientResumeTests
 	}
 
 	[Fact]
-	public async Task Resume_Timeout_ReturnsUnknownAndClosesSentinel()
+	public async Task Resume_Timeout_ReturnsUnknown_LeavesSentinelPending()
 	{
+		// (Decision 13) A recovery resume that itself exhausts must NOT drop the record from the pending scan —
+		// otherwise the next recovery pass never retries a transaction that may settle moments later (the
+		// recovery-exhaustion window). Caller still gets Unknown; record stays pending.
 		var store = StoreWithPendingSentinel();
 		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, PendingPollJson)));
 		using var client = CreateClient(handler, store);
@@ -225,7 +265,16 @@ public class SmartConnectClientResumeTests
 		var result = await client.ResumePollingAsync(PollUrl, Ref);
 
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
-		Assert.Contains("UpdateCompleted:" + Ref + ":Unknown", store.CallLog);
+		// (F5) No transport cause leaks on the resume path either.
+		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
+		// ResumePollingAsync has no transactionId parameter and never looks the persisted TransactionId up from
+		// the store (by design — see Resume_NeverCallsSaveOrUpdatePollingDetails), so PollForResultAsync seeds
+		// its transactionId local as null. The poll loop harvests the id from each poll body instead, so the
+		// exhaustion result still carries the id the PENDING poll body reported ("txn-1" in PendingPollJson).
+		Assert.Equal("txn-1", result.TransactionId);
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
+		Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
 	}
 
 	[Theory]
