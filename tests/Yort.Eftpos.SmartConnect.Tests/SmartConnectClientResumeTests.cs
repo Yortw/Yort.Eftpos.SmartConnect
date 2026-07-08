@@ -116,15 +116,18 @@ public class SmartConnectClientResumeTests
 	}
 
 	[Fact]
-	public async Task Resume_CallsUpdateCompletedOnCompletion()
+	public async Task Resume_LeavesSentinelPendingOnCompletion()
 	{
+		// (Case C) The library no longer finalizes on a completed outcome — it leaves the sentinel pending for
+		// the consumer to complete after durably persisting. Recovery replays it if the consumer crashes first.
 		var store = StoreWithPendingSentinel();
 		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson)));
 		using var client = CreateClient(handler, store);
 
 		await client.ResumePollingAsync(PollUrl, Ref);
 
-		Assert.Contains("UpdateCompleted:" + Ref + ":Accepted", store.CallLog);
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Theory]

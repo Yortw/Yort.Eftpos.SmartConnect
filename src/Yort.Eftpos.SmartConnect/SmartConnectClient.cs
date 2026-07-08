@@ -357,8 +357,11 @@ public sealed class SmartConnectClient : IDisposable
 	/// <summary>
 	/// Resumes polling a persisted polling URL after a crash/restart — the only programmatic way to recover
 	/// a transaction's outcome. Jumps straight to the poll loop: the sentinel already exists from before the
-	/// crash, so neither <c>SaveTransactionAttemptAsync</c> nor <c>UpdatePollingDetailsAsync</c> is called;
-	/// <c>UpdateCompletedAsync</c> IS called when a terminal state is reached. Never throws for runtime
+	/// crash, so neither <c>SaveTransactionAttemptAsync</c> nor <c>UpdatePollingDetailsAsync</c> is called.
+	/// (Case C, ADR) <c>UpdateCompletedAsync</c> is NOT called on a completed outcome either — the sentinel is
+	/// left pending for the consumer to finalize after it durably persists the result, so a crash between
+	/// return and persistence can be recovered by resuming again. It IS still called (with <c>Unknown</c>) when
+	/// polling is exhausted, since that path is not a discoverable outcome to replay. Never throws for runtime
 	/// conditions — an expired OR malformed URL (present but not an absolute http(s) URI) surfaces as
 	/// <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>, meaning the outcome can no longer be determined
 	/// programmatically: resolve it by manual reconciliation. Only a null/blank URL throws (a missing argument).
@@ -886,12 +889,12 @@ public sealed class SmartConnectClient : IDisposable
 					if (poll.Progress == PollProgress.Completed)
 					{
 						var result = poll.Result!;
-						SafeLog(LogLevel.Information, null, "Terminal state {Status} for {ClientTransactionRef} (transactionId {TransactionId}).", result.Status, clientTransactionRef ?? "(journal query)", result.TransactionId);
-						if (clientTransactionRef != null)
-						{
-							await CloseSentinelQuietlyAsync(clientTransactionRef, result.Status).ConfigureAwait(false);
-						}
-
+						// (Case C, ADR) Do NOT finalize the sentinel here. The library leaves the record PENDING and
+						// returns the outcome; the consumer marks it complete (UpdateCompletedAsync) only AFTER it has
+						// durably persisted the outcome (persist-before-complete). If the consumer crashes in between,
+						// the row is still pending, so recovery re-polls this same terminal result and replays it. The
+						// caller must persist idempotently by clientTransactionRef, since replay can re-deliver.
+						SafeLog(LogLevel.Information, null, "Terminal state {Status} for {ClientTransactionRef} (transactionId {TransactionId}) — sentinel left pending for consumer completion.", result.Status, clientTransactionRef ?? "(journal query)", result.TransactionId);
 						return result;
 					}
 
