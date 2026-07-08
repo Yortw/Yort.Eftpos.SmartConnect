@@ -523,7 +523,8 @@ record itself on the paths a consumer cannot recover — a rejected or never-sen
 exhaustion as `Unknown` — and a store-refused pre-POST attempt persisted no record at all; so the consumer
 completes only the resolved outcomes it durably records, not every returned status. `RemoveAsync`'s terminal-only guard is
 unchanged. Scope is the completed-outcome path only — exhaustion (`MaxPollDuration`) still closes as
-`Unknown`, and dispose already leaves the record pending.
+`Unknown` *(superseded by Decision 13, which leaves an exhausted record pending too)*, and dispose already
+leaves the record pending.
 
 ### Rationale
 
@@ -556,7 +557,7 @@ symptom. Self-healing: a failed `UpdateCompletedAsync` after a good persist is r
 
 ## Decision 13: The library never finalizes on poll exhaustion either (uniform never-finalize)
 
-**Status:** Accepted 2026-07-08. Completes Decision 12's deferred scope (ii).
+**Status:** Accepted 2026-07-08. Completes the uniform-never-finalize option Decision 12 deferred.
 
 ### Context
 
@@ -570,14 +571,16 @@ window.
 ### Decision
 
 The exhaustion branch no longer finalizes. It returns `Unknown` and leaves the record pending, on both the
-first-poll and resume paths. The rule is now uniform: the library never finalizes a record; the consumer owns
-the pending set (dispose, POST-phase `TransportUnknown`, `PollingUrlInvalid`, completed outcomes, and now poll
-exhaustion all leave it pending). The consumer drains an exhaustion record via the existing `UpdateCompletedAsync`
+first-poll and resume paths. The rule is now uniform for any exit that could still hold a live outcome: the library leaves the record
+pending and the consumer owns the pending set (dispose, POST-phase `TransportUnknown`, `PollingUrlInvalid`,
+completed outcomes, and now poll exhaustion all leave it pending). The one path the library still finalizes
+itself is the provably rejected or never-sent POST, which completes as `Failed` (Decision 12) — there is no
+live outcome to recover there. The consumer drains an exhaustion record via the existing `UpdateCompletedAsync`
 — a real status once a later recovery poll or reconciliation supplies one, or `Unknown` to accept the ambiguity
 and stop tracking. No new API; `RemoveAsync`'s terminal-only guard unchanged; the returned result shape
-(`Unknown`/`None`) unchanged. There is no `CancellationToken` on the poll methods (Decision 3), so exhaustion and
-dispose are the only poll-loop exits that produce `Unknown`; both now leave the record pending, so "the library
-never finalizes" holds exhaustively — dispose, not cancellation, is the sanctioned way to abandon a wait.
+(`Unknown`/`None`) unchanged. There is no `CancellationToken` on the poll methods (Decision 3): dispose, not cancellation, is the sanctioned
+way to abandon a wait, and dispose too leaves the record pending — so no poll-loop exit drops a record that
+might still settle.
 
 ### Rationale
 
@@ -591,8 +594,8 @@ outcome. It closes the window structurally and collapses two finalization rules 
 - A never-resolving exhaustion record is re-polled on every recovery pass (up to `MaxPollDuration` each) until the
   consumer completes it — consumers must monitor pending-record age (the same duty Decision 12 introduced). That
   duty is only dischargeable if the consumer's store records a per-record creation/last-attempt timestamp; the
-  interface does not require one, so the migration note calls this out (a minimal store modelling only the
-  interface fields cannot compute age).
+  interface does not require one, so a consumer store must add such a field to discharge the duty (a store
+  modelling only the interface's fields cannot compute age).
 - The pending set no longer self-drains on exhaustion.
 - Reverses a doc clause shipped days earlier (the exhaustion carve-out added when Decision 12 landed) — the cost
   of having scoped Decision 12 narrowly on purpose.
