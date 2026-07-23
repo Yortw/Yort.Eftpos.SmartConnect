@@ -37,8 +37,12 @@ public enum SmartConnectFailureCause
 
 	/// <summary>
 	/// SmartConnect answered the poll with a verdict that the polling URL itself is no good
-	/// (401/403/404/410) — the transaction's outcome cannot be learned by polling. Never blind-retry; the
-	/// outcome must be resolved by manual reconciliation (the sentinel stays pending until then).
+	/// (401/403/404/410) — the transaction's outcome cannot be learned by polling. The common case is an
+	/// expired access token: the token embedded in the polling URL was measured to expire ~15 min from the
+	/// original POST (not from completion), after which the poll returns HTTP 401 "Token expired". The
+	/// transaction record is retained server-side (~180 days) but is unreachable — there is no token re-issue
+	/// and no query-by-id. Never blind-retry; the outcome must be resolved by manual reconciliation (the
+	/// sentinel stays pending until then).
 	/// </summary>
 	PollingUrlInvalid = 5
 }
