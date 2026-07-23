@@ -83,6 +83,7 @@ internal static class Program
 			Console.WriteLine("11) Settlement CUTOVER (state-changing!)");
 			Console.WriteLine("12) Acquirer logon");
 			Console.WriteLine("13) Purchase + sample SaleData (illustrative)");
+			Console.WriteLine("14) Poll-until-expiry TTL probe (raw GET until 401/403/404/410 — PollingUrl lifetime)");
 			Console.WriteLine(" 0) Quit");
 			Console.Write("> ");
 
@@ -104,6 +105,7 @@ internal static class Program
 					case "11": await CutoverAsync(client).ConfigureAwait(false); break;
 					case "12": RenderResult(await client.LogonAsync(Registration(), new ConsoleProgress()).ConfigureAwait(false), "(Acquirer.Logon)"); break;
 					case "13": await PurchaseWithSaleDataAsync(client).ConfigureAwait(false); break;
+					case "14": await PollUntilExpiryAsync(store).ConfigureAwait(false); break;
 					case "0": return;
 				}
 			}
@@ -288,6 +290,161 @@ internal static class Program
 		{
 			Console.WriteLine("F8 verdict: the persisted polling URL was rejected — record how old it was (created above) for the lifetime question.");
 		}
+	}
+
+	// Raw-GET TTL probe (INDEPENDENT ORACLE): re-polls a persisted PollingUrl directly with HttpClient — NOT via
+	// the library's ResumePollingAsync — so the transcript records the vendor's ACTUAL HTTP status/body at each
+	// step, not the library's mapped FailureCause. Confirms the polling-URL lifetime (Shift4 stated ~15 min from
+	// the transaction START; CreatedAt is the pre-POST sentinel time) and the exact deletion response (expected
+	// 401/403/404/410 per SmartConnectClient.IsPollingUrlVerdict). GET-only — no money moves — against a REAL,
+	// already-persisted transaction's URL.
+	private static async Task PollUntilExpiryAsync(FileBasedTransactionStateStore store)
+	{
+		var pending = new List<PendingTransaction>(await store.GetPendingTransactionsAsync().ConfigureAwait(false));
+		if (pending.Count == 0)
+		{
+			Console.WriteLine("No pending transactions — run a Purchase (menu 2) and complete it first, so there is a PollingUrl to age.");
+			return;
+		}
+
+		for (var i = 0; i < pending.Count; i++)
+		{
+			Console.WriteLine($" {i + 1}) {pending[i].ClientTransactionRef}  created {pending[i].CreatedAt:u}  url {RedactToken(pending[i].PollingUrl)}");
+		}
+
+		Console.Write("Probe which (number, blank to cancel)? ");
+		if (!int.TryParse(Console.ReadLine()?.Trim(), out var index) || index < 1 || index > pending.Count)
+		{
+			return;
+		}
+
+		var chosen = pending[index - 1];
+		if (string.IsNullOrEmpty(chosen.PollingUrl))
+		{
+			Console.WriteLine("No polling URL persisted for this record — nothing to age.");
+			return;
+		}
+
+		var intervalSeconds = PromptInt("Poll interval seconds (>= 2 to stay under the 429 rate limit)", 60);
+		if (intervalSeconds < 2)
+		{
+			intervalSeconds = 2;
+		}
+
+		var maxMinutes = PromptInt("Max probe duration minutes (safety cap)", 25);
+
+		Console.WriteLine($"Probing {chosen.ClientTransactionRef} (created {chosen.CreatedAt:u}) every {intervalSeconds}s for up to {maxMinutes} min.");
+		Console.WriteLine("Each row is echoed to the transcript. Ctrl+C stops the whole demo (rows already written are kept).");
+		Transcript($"TTLPROBE START ref={chosen.ClientTransactionRef} created={chosen.CreatedAt:u} interval={intervalSeconds}s cap={maxMinutes}m");
+
+		var deadline = DateTimeOffset.UtcNow.AddMinutes(maxMinutes);
+		var confirmations = 0;
+
+		using (var http = new HttpClient())
+		{
+			http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+
+			while (DateTimeOffset.UtcNow < deadline)
+			{
+				var ageFromStart = DateTimeOffset.UtcNow - chosen.CreatedAt;
+				int statusCode;
+				string classification;
+				string bodySnippet;
+
+				try
+				{
+					using (var response = await http.GetAsync(chosen.PollingUrl).ConfigureAwait(false))
+					{
+						statusCode = (int)response.StatusCode;
+						var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+						bodySnippet = Snippet(RedactToken(body));
+						classification = ClassifyProbeStatus(statusCode, body);
+					}
+				}
+				catch (Exception ex)
+				{
+					// Never let a transient transport error abort the probe — log it and keep aging the URL.
+					statusCode = -1;
+					classification = "transport error: " + ex.GetType().Name;
+					bodySnippet = ex.Message;
+				}
+
+				var line = $"age(fromStart)={FormatSpan(ageFromStart)} http={statusCode} {classification} body={bodySnippet}";
+				Console.WriteLine("  " + line);
+				Transcript("TTLPROBE " + line);
+
+				var verdict = statusCode == 401 || statusCode == 403 || statusCode == 404 || statusCode == 410;
+				if (verdict)
+				{
+					confirmations++;
+					if (confirmations >= 3)
+					{
+						Console.WriteLine($"Verdict confirmed x3: PollingUrl invalid/deleted at ~{FormatSpan(ageFromStart)} from START (HTTP {statusCode}).");
+						Transcript($"TTLPROBE DONE verdictHttp={statusCode} ttlFromStart~={FormatSpan(ageFromStart)}");
+						return;
+					}
+				}
+				else
+				{
+					confirmations = 0;
+				}
+
+				await Task.Delay(TimeSpan.FromSeconds(intervalSeconds)).ConfigureAwait(false);
+			}
+		}
+
+		Console.WriteLine($"Reached the {maxMinutes}-min cap with no stable verdict — see the transcript.");
+		Transcript("TTLPROBE DONE reason=cap-reached");
+	}
+
+	private static string ClassifyProbeStatus(int statusCode, string body)
+	{
+		if (statusCode == 429)
+		{
+			return "RATE-LIMITED (429) — raise the interval";
+		}
+
+		if (statusCode == 401 || statusCode == 403 || statusCode == 404 || statusCode == 410)
+		{
+			return "URL INVALID/DELETED (verdict status)";
+		}
+
+		if (statusCode == 408 || statusCode >= 500)
+		{
+			return "transient (5xx/408)";
+		}
+
+		if (statusCode >= 200 && statusCode < 300)
+		{
+			return body.IndexOf("COMPLETED", StringComparison.OrdinalIgnoreCase) >= 0
+				? "OK — still returns a COMPLETED result"
+				: "OK — 2xx (not COMPLETED)";
+		}
+
+		return "other";
+	}
+
+	private static int PromptInt(string prompt, int defaultValue)
+	{
+		Console.Write($"{prompt} [{defaultValue}]: ");
+		var input = Console.ReadLine()?.Trim();
+		return int.TryParse(input, out var value) && value > 0 ? value : defaultValue;
+	}
+
+	private static string Snippet(string? text)
+	{
+		if (string.IsNullOrEmpty(text))
+		{
+			return "(empty)";
+		}
+
+		var oneLine = text!.Replace("\r", " ").Replace("\n", " ");
+		return oneLine.Length <= 160 ? oneLine : oneLine.Substring(0, 160) + "...";
+	}
+
+	private static string FormatSpan(TimeSpan span)
+	{
+		return $"{(int)span.TotalMinutes}m{span.Seconds:00}s";
 	}
 
 	// Exercises the library's diagnostic journal query (Journal.GetTransResult): fetches the terminal's most-

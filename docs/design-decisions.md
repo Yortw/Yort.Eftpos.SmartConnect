@@ -11,7 +11,7 @@ evaluating the library would want.
 > and are referenced from code comments and XML docs; gaps in the rationale of a decision usually
 > mean the omitted detail was consumer-specific.
 
-**Status:** Accepted · **Last updated:** 2026-06-17
+**Status:** Accepted · **Last updated:** 2026-07-24
 
 The library wraps the **SmartPay / Shift4 SmartConnect** (New Zealand) cloud REST API: a register
 is paired to a payment terminal, transactions are submitted with `POST /Transaction`, and the
@@ -528,10 +528,12 @@ leaves the record pending.
 
 ### Rationale
 
-A completed transaction's polling URL is idempotently re-pollable, so a pending record is replayable: a crash
-before the consumer finalizes just means recovery re-polls and re-delivers the same outcome. Deferring the
-finalize to after the consumer's durable write closes the window structurally rather than alerting on its
-symptom. Self-healing: a failed `UpdateCompletedAsync` after a good persist is retried by replay.
+A completed transaction's polling URL is idempotently re-pollable *within the access token's lifetime*
+(measured at ~15 min from the POST — see the 2026-07-24 update below), so a pending record is replayable during
+that window: a crash before the consumer finalizes just means recovery re-polls and re-delivers the same
+outcome. Deferring the finalize to after the consumer's durable write closes the window structurally rather
+than alerting on its symptom. Self-healing: a failed `UpdateCompletedAsync` after a good persist is retried by
+replay — provided the replay lands before the token expires.
 
 ### Trade-offs Accepted
 
@@ -552,6 +554,32 @@ symptom. Self-healing: a failed `UpdateCompletedAsync` after a good persist is r
 | Callback/event delivery (library invokes a handler, finalizes on its success) | Rejected | Needs a consumer-side persist-confirmation point the library can call back into; forces control inversion and a persistence-pipeline restructure; returning a result alongside re-invites the loss |
 | Non-breaking new "return-without-closing" entry point | Rejected | Spends permanent API surface to avoid a break that is free pre-1.0 with no stable consumers |
 | Uniform "library never finalizes" (incl. the exhaustion path) | Done — see Decision 13 | Followed up immediately after Case C: extends leave-pending to poll exhaustion, closing the recovery-exhaustion window |
+
+### Update (2026-07-24) — polling-URL lifetime measured (~15 min from the POST)
+
+The "idempotently re-pollable" property this decision (and the resume-by-polling-URL recovery of Decisions 10
+and 13) leans on was previously stated with **no time bound**. It has now been measured live against the dev
+pinpad (`api-dev.smart-connect.cloud`) with a poll-until-expiry probe (raw `HttpClient` GET, bypassing the
+library's own status mapping — samples demo menu 14):
+
+- The polling URL carries the `merchantAccessToken` in its query string, and that token expires **~15 minutes
+  from the transaction START (the POST), not from completion**. A real `Card.Purchase`'s persisted polling
+  URL, polled every 60s, returned HTTP 200 with the full COMPLETED result through age 14m41s, then HTTP 401
+  with body `{"error":"Token expired"}` from 15m41s, stable across three consecutive polls
+  (15m41s / 16m41s / 17m42s).
+- Every 200 body carried a top-level `RecordExpiry` ~180 days out (~2027-01-19). So the transaction **record**
+  is retained ~6 months server-side — but with the token expired, no token re-issue, and no query-by-id, the
+  outcome is **unreachable by the POS after ~15 min**.
+
+Consequences:
+
+- Re-pollability (this decision) and recovery-by-resume (Decisions 10 and 13) are **time-bounded to ~15 min
+  from the POST**, not indefinite. A consumer's persist-then-complete window, and any recovery pass, must
+  re-poll within that window. Past it the poll returns HTTP 401 → `PollingUrlInvalid`, and the outcome is
+  manual-reconciliation only (the record survives server-side but cannot be reached).
+- This **validates** the `PollingUrlInvalid` handling (401/403/404/410 → leave the record pending, never a
+  false `Declined`) against real behaviour: an expired token surfaces as exactly that — a "cannot determine
+  the outcome" verdict — not as a decline or a spurious success.
 
 ---
 
@@ -589,12 +617,16 @@ previously seeded no id; the `Status`/`FailureCause` shape is unchanged.
 Exhaustion is a timeliness boundary for the live caller ("stop making the customer wait"), not a verdict that
 the transaction is dead. Returning `Unknown` (timeliness) and leaving the record pending (durability) are
 separable concerns; keeping both lets the caller act immediately while recovery can still discover a late
-outcome. It closes the window structurally and collapses two finalization rules into one.
+outcome — as long as the resume poll lands within the polling URL's ~15-min lifetime (measured; see Decision
+12's 2026-07-24 update), past which the resume returns `PollingUrlInvalid` and the outcome is manual
+reconciliation. It closes the window structurally and collapses two finalization rules into one.
 
 ### Trade-offs Accepted
 
-- A never-resolving exhaustion record is re-polled on every recovery pass (up to `MaxPollDuration` each) until the
-  consumer completes it — consumers must monitor pending-record age (the same duty Decision 12 introduced). That
+- A never-resolving exhaustion record is re-polled on every recovery pass (up to `MaxPollDuration` each while
+  the polling URL's token is still valid; once it expires — ~15 min from the POST, see Decision 12's 2026-07-24
+  update — the re-poll returns `PollingUrlInvalid` immediately, no spin) until the consumer completes it —
+  consumers must monitor pending-record age (the same duty Decision 12 introduced). That
   duty is only dischargeable if the consumer's store records a per-record creation/last-attempt timestamp; the
   interface does not require one, so a consumer store must add such a field to discharge the duty (a store
   modelling only the interface's fields cannot compute age).

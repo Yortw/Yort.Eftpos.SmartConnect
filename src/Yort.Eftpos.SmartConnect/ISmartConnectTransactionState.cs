@@ -22,7 +22,10 @@ namespace Yort.Eftpos.SmartConnect;
 /// completion. Because recovery can re-poll and re-deliver a still-pending completed transaction, the
 /// consumer's outcome persistence MUST be idempotent by <c>clientTransactionRef</c>. A consumer that never
 /// calls <see cref="UpdateCompletedAsync"/> leaves the record pending indefinitely, so every recovery pass
-/// re-polls and re-delivers it — monitor pending-row age. Conversely this is self-healing: if
+/// re-polls it — but re-delivery of the outcome only works while the polling URL's access token is valid
+/// (measured at ~15 min from the original POST); past that the re-poll returns
+/// <see cref="SmartConnectFailureCause.PollingUrlInvalid"/> and the outcome is manual-reconciliation only, so
+/// monitor pending-row age and reconcile stale records. Conversely this is self-healing: if
 /// <see cref="UpdateCompletedAsync"/> fails after a successful persist, replay plus idempotent persistence
 /// retries the completion.</para>
 /// <para>Implementation guidance (ADR Decision 10): (a) make the attempt write reserve capacity comparable

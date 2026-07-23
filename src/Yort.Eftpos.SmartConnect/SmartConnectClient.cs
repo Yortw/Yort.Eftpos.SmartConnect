@@ -372,7 +372,10 @@ public sealed class SmartConnectClient : IDisposable
 	/// (Case C, ADR) <c>UpdateCompletedAsync</c> is NOT called on a completed outcome either — the sentinel is
 	/// left pending for the consumer to finalize after it durably persists the result, so a crash between
 	/// return and persistence can be recovered by resuming again. Poll exhaustion leaves the sentinel pending too
-	/// (Decision 13): a later recovery pass can still re-poll and discover the real outcome. Never throws for runtime
+	/// (Decision 13): a later recovery pass can still re-poll and discover the real outcome — but only while the
+	/// polling URL's access token is valid, which was measured at ~15 min from the original POST (not from
+	/// completion); past that the poll returns HTTP 401 "Token expired" and this call surfaces
+	/// <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>. Never throws for runtime
 	/// conditions — an expired OR malformed URL (present but not an absolute http(s) URI) surfaces as
 	/// <see cref="SmartConnectFailureCause.PollingUrlInvalid"/>, meaning the outcome can no longer be determined
 	/// programmatically: resolve it by manual reconciliation. Only a null/blank URL throws (a missing argument).
