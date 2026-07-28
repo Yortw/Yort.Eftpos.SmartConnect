@@ -506,6 +506,15 @@ internal static class Program
 		Console.WriteLine();
 		Console.WriteLine($"Status: {result.Status}   FailureCause: {result.FailureCause}");
 		Console.WriteLine($"Ref: {clientTransactionRef}   TransactionId: {result.TransactionId}");
+
+		// Probe target. ResultText is absent from Shift4's documented Data Object table (it appears only in their
+		// worked examples) so it has no typed property and must be read from RawData. Surfaced on its own line for
+		// every outcome because the open question is exactly what it contains PER OUTCOME: their one COMPLETED
+		// example shows a stale "Transaction takes longer than usual" on an OK-ACCEPTED result, which would make it
+		// a sticky last-status message rather than a decline reason. Accepted runs are therefore the decisive case.
+		string? resultText = null;
+		result.RawData?.TryGetValue("ResultText", out resultText);
+		Console.WriteLine($"ResultText: {resultText ?? "(absent)"}");
 		if (!string.IsNullOrEmpty(result.ReferenceId))
 		{
 			// Journal.GetTransResult path: the reported transaction's id, distinct from the query's TransactionId.
@@ -530,6 +539,14 @@ internal static class Program
 			// the terminal must be at its idle screen BEFORE the POS sends; safe to retry once it is).
 			RenderRawData(result);
 		}
+		else
+		{
+			// Accepted/Declined get the raw dump too, so undocumented fields (notably ResultText, which has no
+			// typed property) can be observed on a NORMAL outcome - the Accepted case is the decisive one for
+			// whether ResultText is a per-outcome reason or a stale last-status message. Receipt is skipped here:
+			// it is already rendered in full above and would otherwise bury every other field.
+			RenderRawData(result, skipReceipt: true);
+		}
 
 		if (result.Status == SmartConnectTransactionStatus.DeviceOffline)
 		{
@@ -544,7 +561,7 @@ internal static class Program
 			Console.WriteLine("(Journal.GetTransResult, menu 6, shows the device's last transaction as evidence only).");
 		}
 
-		Transcript($"RESULT ref={clientTransactionRef} status={result.Status} cause={result.FailureCause} txnId={result.TransactionId} auth={result.AuthId} total={result.AmountTotal.ToCents()}c surcharge={result.AmountSurcharge.ToCents()}c tip={result.AmountTip.ToCents()}c");
+		Transcript($"RESULT ref={clientTransactionRef} status={result.Status} cause={result.FailureCause} txnId={result.TransactionId} auth={result.AuthId} total={result.AmountTotal.ToCents()}c surcharge={result.AmountSurcharge.ToCents()}c tip={result.AmountTip.ToCents()}c resultText={resultText ?? "(absent)"}");
 	}
 
 	private static SmartConnectRegistration Registration()
@@ -591,7 +608,7 @@ internal static class Program
 		Console.WriteLine("Record the response-shape verdict (raw fields above) in the ADR open-questions table.");
 	}
 
-	private static void RenderRawData(SmartConnectResult result)
+	private static void RenderRawData(SmartConnectResult result, bool skipReceipt = false)
 	{
 		if (result.RawData == null || result.RawData.Count == 0)
 		{
@@ -602,6 +619,14 @@ internal static class Program
 		Console.WriteLine("raw response fields:");
 		foreach (var pair in result.RawData)
 		{
+			// A financial receipt is hundreds of characters on one unwrapped line; re-dumping it here would push
+			// every other field off a terminal screen. The caller has already rendered it properly.
+			if (skipReceipt && string.Equals(pair.Key, "Receipt", StringComparison.OrdinalIgnoreCase))
+			{
+				Console.WriteLine("  Receipt = (rendered above)");
+				continue;
+			}
+
 			Console.WriteLine($"  {pair.Key} = {RedactToken(pair.Value)}");
 		}
 	}
