@@ -12,6 +12,17 @@ updates:
     # bumps against that intent rather than auto-merging.
     commit-message:
       prefix: "build"
+    # Major bumps on the runtime dependencies are ignored deliberately. This library targets
+    # netstandard2.0 and ships to .NET Framework consumers, so a floor raised to a newer major
+    # would force that major on every consumer while gaining nothing — anyone who wants the newer
+    # major can reference it directly, since NuGet resolves to the highest version in the graph.
+    # Patch and minor updates are still proposed, so a security fix on the current major (the
+    # NU19xx-surfacing purpose above) still reaches us.
+    ignore:
+      - dependency-name: "System.Text.Json"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Extensions.Logging.Abstractions"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
