@@ -29,6 +29,10 @@ public class SmartConnectClientPollingTests
 
 	private const string PendingPollJson = "{\"transactionId\": \"txn-1\", \"transactionStatus\": \"PENDING\", \"data\": {}}";
 
+	// Omits the envelope transactionId entirely — every other pending fixture carries one, so nothing else
+	// exercises the `?? transactionId` keep-seed arm of the poll loop's harvest.
+	private const string PendingPollJsonNoId = "{\"transactionStatus\": \"PENDING\", \"data\": {}}";
+
 	private const string DelayedPollJson =
 		"{\"transactionId\": \"txn-1\", \"transactionStatus\": \"PENDING\", \"data\": {\"TransactionResult\": \"OK-DELAYED\"}}";
 
@@ -49,8 +53,39 @@ public class SmartConnectClientPollingTests
 		public void Report(SmartConnectPollingStatus value) => Reports.Add(value);
 	}
 
+	private sealed class ThrowingProgress : IProgress<SmartConnectPollingStatus>
+	{
+		public int Calls { get; private set; }
+
+		public void Report(SmartConnectPollingStatus value)
+		{
+			Calls++;
+			throw new ObjectDisposedException("progress sink");
+		}
+	}
+
 	private static HttpResponseMessage Json(HttpStatusCode status, string json)
 		=> new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+
+	// A 200 response whose Content-Type declares a charset the runtime cannot resolve — ReadAsStringAsync
+	// throws InvalidOperationException on decode (an intermediary error page is the likely real-world source).
+	private static HttpResponseMessage BadCharset(string json)
+	{
+		var content = new StringContent(json, Encoding.UTF8, "application/json");
+		content.Headers.ContentType!.CharSet = "foo-bar";
+		return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+	}
+
+#if NET48
+	// A 200 whose charset is a QUOTED token (charset="utf-8"). net48's HttpContent throws on this; modern .NET
+	// accepts it — so this case only exists on the net48 leg.
+	private static HttpResponseMessage QuotedCharset(string json)
+	{
+		var content = new StringContent(json, Encoding.UTF8, "application/json");
+		content.Headers.ContentType!.CharSet = "\"utf-8\"";
+		return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+	}
+#endif
 
 	/// <summary>First call gets the initial POST response; later calls walk the poll sequence (last repeats).</summary>
 	private static MockHttpHandler SequencedHandler(params Func<HttpResponseMessage>[] pollResponses)
@@ -77,7 +112,7 @@ public class SmartConnectClientPollingTests
 			AmountTotal = Money.FromCents(1250),
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo",
+			POSVendorName = "DemoVendor",
 			ClientTransactionRef = Ref
 		};
 	}
@@ -124,7 +159,10 @@ public class SmartConnectClientPollingTests
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
 		Assert.Equal(3, progress.Reports.Count(r => r.State == SmartConnectPollingState.Polling));
-		Assert.Contains("UpdateCompleted:" + Ref + ":Accepted", store.CallLog);
+		// (Case C) The library no longer finalizes on a completed outcome — it leaves the sentinel pending for
+		// the consumer to complete after durably persisting. Recovery replays it if the consumer crashes first.
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Fact]
@@ -163,7 +201,10 @@ public class SmartConnectClientPollingTests
 
 		Assert.Equal(SmartConnectTransactionStatus.Declined, result.Status);
 		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
-		Assert.Contains("UpdateCompleted:" + Ref + ":Declined", store.CallLog);
+		// (Case C) The library no longer finalizes on a completed outcome — it leaves the sentinel pending for
+		// the consumer to complete after durably persisting. Recovery replays it if the consumer crashes first.
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Fact]
@@ -183,8 +224,11 @@ public class SmartConnectClientPollingTests
 	}
 
 	[Fact]
-	public async Task Poll_Timeout_ReturnsUnknownAndClosesSentinelUnknown()
+	public async Task Poll_Timeout_ReturnsUnknown_LeavesSentinelPending()
 	{
+		// (Decision 13) Poll exhaustion is a TIMELINESS boundary for the live caller, not a verdict that the
+		// transaction is dead. The caller still gets Unknown immediately, but the library no longer finalizes:
+		// the record is left PENDING so a later recovery pass can re-poll and discover a late-settling outcome.
 		var store = new InMemoryTransactionStateStore();
 		var handler = SequencedHandler(() => Json(HttpStatusCode.OK, PendingPollJson));
 		var logger = new ListLogger();
@@ -192,11 +236,40 @@ public class SmartConnectClientPollingTests
 
 		var result = await client.ProcessTransactionAsync(CreateRequest());
 
+		// Invariant that must NOT change: a timeout still surfaces Unknown to the caller (never a silent success).
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
 		// Distinguishable from POST-phase TransportUnknown — poll exhaustion carries no transport cause.
 		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
-		Assert.Contains("UpdateCompleted:" + Ref + ":Unknown", store.CallLog);
+		// The change: the library did NOT finalize — no UpdateCompleted call, record stays pending.
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
+		// (F4) "Not finalized" is not enough — prove the record is actually RECOVERABLE: present in the pending
+		// scan with the polling URL a later resume needs. A record that is unfinalized but absent from the scan
+		// (or missing its URL) passes the Status-null check while the outcome is still lost.
+		Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		Assert.False(string.IsNullOrEmpty(store.Records[Ref].PollingUrl));
+		// (F5) Result shape preserved: TransactionId must not be dropped (it is the consumer's reconciliation key).
+		Assert.Equal("txn-1", result.TransactionId);
 		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
+	}
+
+	[Fact]
+	public async Task Poll_ExhaustsWithPollBodiesOmittingTransactionId_KeepsSeededTransactionId()
+	{
+		// Pins the `?? transactionId` keep-seed arm in the poll loop's harvest (SmartConnectClient.cs):
+		// `transactionId = poll.TransactionId ?? transactionId;`. Every pending fixture elsewhere in this
+		// suite carries a transactionId that matches the seed, so overwriting unconditionally with
+		// `poll.TransactionId` would still pass them all — only a body that OMITS the id exposes the bug
+		// (the seeded id would be silently nulled on exhaustion).
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(() => Json(HttpStatusCode.OK, PendingPollJsonNoId));
+		using var client = CreateClient(handler, store, maxPollDuration: TimeSpan.FromSeconds(10));
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+		// "txn-1" is InitialResponseJson's transactionId — the seed the harvest must preserve.
+		Assert.Equal("txn-1", result.TransactionId);
 	}
 
 	[Fact]
@@ -304,9 +377,12 @@ public class SmartConnectClientPollingTests
 	}
 
 	[Fact]
-	public async Task Poll_UpdateCompletedThrowsAtTerminal_ResultStillReturned()
+	public async Task Poll_Completed_NeverInvokesUpdateCompleted_EvenWhenStoreWouldThrow()
 	{
-		// (R3) A persistence failure never masks an outcome the library holds; (G6) the cause stays None.
+		// (Case C) The completed-outcome path no longer calls UpdateCompletedAsync at all — the sentinel is
+		// left pending for the consumer. A store armed to throw on UpdateCompletedAsync would surface that
+		// throw as a Warning (or a StateStoreFailure) if the path ever called it; asserting the result still
+		// returns Accepted with no Warning and the sentinel still pending is the reintroduction guard.
 		var store = new InMemoryTransactionStateStore { ThrowOnUpdateCompleted = new System.IO.IOException("store down") };
 		var handler = SequencedHandler(() => Json(HttpStatusCode.OK, AcceptedPollJson));
 		var logger = new ListLogger();
@@ -316,7 +392,186 @@ public class SmartConnectClientPollingTests
 
 		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
 		Assert.NotEqual(SmartConnectFailureCause.StateStoreFailure, result.FailureCause);
-		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+		Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Warning);
+		Assert.Null(store.Records[Ref].Status);
+	}
+
+	[Fact]
+	public async Task Poll_BadCharsetHeader_RecoversBodyFromUtf8Bytes()
+	{
+		// (I2) A poll response whose DECLARED charset is unusable but whose bytes are valid UTF-8 (a lying
+		// intermediary header) is recovered from the raw bytes and parsed normally, not discarded — so the
+		// single bad-charset poll completes the transaction instead of spinning to a false Unknown. The
+		// recovery is logged (F7). No NetworkError: the body parsed on the first read.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(() => BadCharset(AcceptedPollJson));
+		var progress = new RecordingProgress();
+		var logger = new ListLogger();
+		using var client = CreateClient(handler, store, logger);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest(), progress);
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.DoesNotContain(progress.Reports, r => r.State == SmartConnectPollingState.NetworkError);
+		var decodeWarning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.IndexOf("UTF-8", StringComparison.OrdinalIgnoreCase) >= 0);
+		Assert.Contains(decodeWarning.State, p => p.Key == "ExceptionType" && (string?)p.Value == nameof(InvalidOperationException));
+	}
+
+#if NET48
+	[Fact]
+	public async Task Poll_QuotedCharsetHeader_RecoversOnNet48()
+	{
+		// net48-only: HttpContent.ReadAsStringAsync throws on a QUOTED charset (charset="utf-8"), which modern
+		// .NET accepts — a divergence the net8 leg cannot reach. The byte-fallback recovers the body; asserting
+		// the recovery Warning fires also confirms the net48 decode actually threw (otherwise there'd be none).
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(() => QuotedCharset(AcceptedPollJson));
+		var logger = new ListLogger();
+		using var client = CreateClient(handler, store, logger);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.IndexOf("UTF-8", StringComparison.OrdinalIgnoreCase) >= 0);
+	}
+#endif
+
+	[Fact]
+	public async Task Post_BadCharsetHeader_RecoversPollingUrlAndPolls()
+	{
+		// (I2) The POST answered 200 with an unusable charset header but a valid UTF-8 body — the polling URL
+		// is recovered from the bytes and the transaction polls to its real outcome, not a false Unknown.
+		var store = new InMemoryTransactionStateStore();
+		var first = true;
+		var handler = new MockHttpHandler(_ =>
+		{
+			if (first)
+			{
+				first = false;
+				return Task.FromResult(BadCharset(InitialResponseJson));
+			}
+
+			return Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson));
+		});
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		// (Case C) The library no longer finalizes on a completed outcome — it leaves the sentinel pending for
+		// the consumer to complete after durably persisting. Recovery replays it if the consumer crashes first.
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
+	}
+
+	[Theory]
+	[InlineData("relative/path")]
+	[InlineData("foo:bar")]
+	public async Task Post_UnusablePollingUrlInBody_IsUnknownPollingUrlInvalid_SentinelPending(string badUrl)
+	{
+		// (M3/F1) The POST answered 200 but the polling URL it returned is not a usable absolute http(s) URL —
+		// sending to it would throw from HttpClient mid-loop. Map to Unknown/PollingUrlInvalid with the
+		// sentinel left pending (like the no-URL and poll-verdict paths), never a raw throw.
+		var store = new InMemoryTransactionStateStore();
+		var badInitial = "{\"transactionId\": \"txn-1\", \"transactionStatus\": \"PENDING\", \"data\": {\"PollingUrl\": \"" + badUrl + "\"}}";
+		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, badInitial)));
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+		Assert.Equal(SmartConnectFailureCause.PollingUrlInvalid, result.FailureCause);
+		Assert.Null(store.Records[Ref].Status);
+	}
+
+	[Fact]
+	public async Task Poll_ProgressSinkThrows_SwallowedAndPollingContinues()
+	{
+		// (I4) A consumer's IProgress sink is an informational side-channel — a throw from it (the classic case
+		// is a WinForms Control.Invoke onto a form the operator just closed) must never abort the poll of a
+		// live payment. It is swallowed and logged by type (like a failing logger), and the outcome still
+		// returns normally.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(
+			() => Json(HttpStatusCode.OK, PendingPollJson),
+			() => Json(HttpStatusCode.OK, AcceptedPollJson));
+		var progress = new ThrowingProgress();
+		var logger = new ListLogger();
+		using var client = CreateClient(handler, store, logger);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest(), progress);
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.True(progress.Calls > 0);
+		var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.IndexOf("progress", StringComparison.OrdinalIgnoreCase) >= 0);
+		Assert.Contains(warning.State, p => p.Key == "ExceptionType" && (string?)p.Value == nameof(ObjectDisposedException));
+	}
+
+	[Fact]
+	public async Task Poll_GarbledJsonBody_TreatedAsTransient_Recovers()
+	{
+		// (T1) A 200 poll whose JSON body is garbled (a proxy blip) is transient — report NetworkError, keep
+		// polling, recover on the next valid answer. Pins the client-level catch(JsonException) that upholds
+		// the never-throws contract: the parser throws on bad JSON, the loop must absorb it.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(
+			() => Json(HttpStatusCode.OK, "{ this is not valid json"),
+			() => Json(HttpStatusCode.OK, AcceptedPollJson));
+		var progress = new RecordingProgress();
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest(), progress);
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Contains(progress.Reports, r => r.State == SmartConnectPollingState.NetworkError);
+	}
+
+	[Fact]
+	public async Task Poll_PersistentGarbledJson_TimesOutUnknown()
+	{
+		// (T1) A body that never parses must not spin forever — it exhausts MaxPollDuration to Unknown.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(() => Json(HttpStatusCode.OK, "{ garbled"));
+		using var client = CreateClient(handler, store, maxPollDuration: TimeSpan.FromSeconds(10));
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+	}
+
+	[Fact]
+	public async Task Poll_Http5xxResponse_TreatedAsTransient_Recovers()
+	{
+		// (T2) A poll GET returning HTTP 500 is a transient server blip — distinct from the 401/403/404/410
+		// URL-verdict codes and from 429 — so report NetworkError, keep polling, recover on the next answer.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(
+			() => new HttpResponseMessage(HttpStatusCode.InternalServerError),
+			() => Json(HttpStatusCode.OK, AcceptedPollJson));
+		var progress = new RecordingProgress();
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ProcessTransactionAsync(CreateRequest(), progress);
+
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.Contains(progress.Reports, r => r.State == SmartConnectPollingState.NetworkError);
+	}
+
+	[Theory]
+	[InlineData(HttpStatusCode.InternalServerError)]
+	[InlineData(HttpStatusCode.BadGateway)]
+	[InlineData(HttpStatusCode.ServiceUnavailable)]
+	public async Task Poll_PersistentHttp5xx_TimesOutUnknown(HttpStatusCode status)
+	{
+		// (T2) A poll phase that only ever gets 5xx exhausts to Unknown — never Failed (the outcome is
+		// unprovable) and never a URL-verdict stop.
+		var store = new InMemoryTransactionStateStore();
+		var handler = SequencedHandler(() => new HttpResponseMessage(status));
+		using var client = CreateClient(handler, store, maxPollDuration: TimeSpan.FromSeconds(10));
+
+		var result = await client.ProcessTransactionAsync(CreateRequest());
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
 	}
 
 	[Fact]

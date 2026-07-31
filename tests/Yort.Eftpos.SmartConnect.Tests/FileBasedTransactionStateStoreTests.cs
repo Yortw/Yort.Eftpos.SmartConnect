@@ -117,6 +117,22 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 	}
 
 	[Fact]
+	public async Task UpdateCompleted_CalledTwice_IsIdempotent_AndDoesNotThrow()
+	{
+		// (Case C, M4) The interface now promises completing an already-completed record is permitted and
+		// idempotent — recovery replay and consumer-side deployment skew both reach it. Pin it on the shipped
+		// store, not just the in-memory fake: the second completion must not throw and the record must stay
+		// completed (out of the pending scan), so a re-delivered outcome self-heals rather than faulting.
+		var store = NewStore();
+		await store.SaveTransactionAttemptAsync("ref-1", SmartConnectTransactionType.CardPurchase, 500);
+		await store.UpdateCompletedAsync("ref-1", SmartConnectTransactionStatus.Accepted);
+
+		await store.UpdateCompletedAsync("ref-1", SmartConnectTransactionStatus.Accepted);
+
+		Assert.Empty(await store.GetPendingTransactionsAsync());
+	}
+
+	[Fact]
 	public async Task RemoveAsync_OnCompletedRecord_DeletesIt()
 	{
 		var store = NewStore();

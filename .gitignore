@@ -26,6 +26,9 @@ coverage*.xml
 *.snupkg
 .nuget/
 
+# Local-only development notes / agentic-workflow artifacts (kept out of the public repo)
+.dev-notes/
+
 # OS
 Thumbs.db
 .DS_Store

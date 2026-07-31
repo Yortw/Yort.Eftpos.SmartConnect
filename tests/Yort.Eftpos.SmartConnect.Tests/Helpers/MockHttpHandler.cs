@@ -29,7 +29,8 @@ public sealed class MockHttpHandler : HttpMessageHandler
 	{
 		// Snapshot everything assertions need NOW — HttpClient disposes request content after the send,
 		// so a test holding the live HttpRequestMessage would read disposed state later.
-		var body = request.Content == null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+		// No CancellationToken overload on net48/netstandard2.0; the parameterless read is fine for tests.
+		var body = request.Content == null ? null : await request.Content.ReadAsStringAsync();
 		_requests.Add(new RecordedRequest
 		{
 			Method = request.Method,

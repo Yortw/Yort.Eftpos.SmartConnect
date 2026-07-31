@@ -32,7 +32,7 @@ public class ResultVisualsTests
 	[InlineData(SmartConnectTransactionStatus.Failed, ResultSeverity.Negative)]
 	internal void ForTransaction_MapsSeverityForEveryStatus(SmartConnectTransactionStatus status, ResultSeverity expected)
 	{
-		var visual = ResultVisuals.ForTransaction(status, TxnCaptions);
+		var visual = ResultVisuals.ForTransaction(status, errorMessage: null, TxnCaptions);
 		Assert.Equal(expected, visual.Severity);
 		Assert.Equal(TxnCaptions[status], visual.Caption);
 	}
@@ -46,6 +46,30 @@ public class ResultVisualsTests
 		var visual = ResultVisuals.ForOperation(status, errorMessage: null, OpCaptions);
 		Assert.Equal(expected, visual.Severity);
 		Assert.Equal(OpCaptions[status], visual.Caption);
+	}
+
+	[Fact]
+	public void ForTransaction_Failed_CarriesErrorMessageAsDetail()
+	{
+		var visual = ResultVisuals.ForTransaction(SmartConnectTransactionStatus.Failed, "This register is not paired to a device", TxnCaptions);
+		Assert.Equal("This register is not paired to a device", visual.Detail);
+	}
+
+	[Fact]
+	public void ForTransaction_Unknown_CarriesErrorMessageAsDetail()
+	{
+		// The 5xx/408 Unknown path populates ErrorMessage (gateway/proxy text); surface it too, so an
+		// ambiguous outcome dialog tells the operator what the intermediary said.
+		var visual = ResultVisuals.ForTransaction(SmartConnectTransactionStatus.Unknown, "HTTP 502 Bad Gateway", TxnCaptions);
+		Assert.Equal("HTTP 502 Bad Gateway", visual.Detail);
+	}
+
+	[Fact]
+	public void ForTransaction_Accepted_HasNoDetail()
+	{
+		// A successful outcome carries no ErrorMessage; the detail must stay null even if a stray string is passed.
+		var visual = ResultVisuals.ForTransaction(SmartConnectTransactionStatus.Accepted, "ignored", TxnCaptions);
+		Assert.Null(visual.Detail);
 	}
 
 	[Fact]
@@ -67,7 +91,7 @@ public class ResultVisualsTests
 	public void ForTransaction_MissingCaptionKey_FallsBackToEnumName()
 	{
 		var empty = new Dictionary<SmartConnectTransactionStatus, string>();
-		var visual = ResultVisuals.ForTransaction(SmartConnectTransactionStatus.Declined, empty);
+		var visual = ResultVisuals.ForTransaction(SmartConnectTransactionStatus.Declined, errorMessage: null, empty);
 		Assert.Equal("Declined", visual.Caption);
 		Assert.Equal(ResultSeverity.Negative, visual.Severity);
 	}

@@ -77,13 +77,14 @@ public class CaptionResolverTests
 	[Fact]
 	public void DefaultCaptionMaps_CoverEveryEnumValue()
 	{
+		// Non-generic Enum.GetValues + Cast: the generic Enum.GetValues<T>() is .NET 5+ only (net48 leg).
 		var states = DefaultCaptions.CreateStateCaptions();
-		Assert.True(System.Enum.GetValues<SmartConnectPollingState>().All(states.ContainsKey));
+		Assert.True(System.Enum.GetValues(typeof(SmartConnectPollingState)).Cast<SmartConnectPollingState>().All(states.ContainsKey));
 
 		var txn = DefaultCaptions.CreateTransactionResultCaptions();
-		Assert.True(System.Enum.GetValues<SmartConnectTransactionStatus>().All(txn.ContainsKey));
+		Assert.True(System.Enum.GetValues(typeof(SmartConnectTransactionStatus)).Cast<SmartConnectTransactionStatus>().All(txn.ContainsKey));
 
 		var op = DefaultCaptions.CreateOperationResultCaptions();
-		Assert.True(System.Enum.GetValues<SmartConnectOperationStatus>().All(op.ContainsKey));
+		Assert.True(System.Enum.GetValues(typeof(SmartConnectOperationStatus)).Cast<SmartConnectOperationStatus>().All(op.ContainsKey));
 	}
 }
