@@ -118,11 +118,14 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 		// (idempotently — recovery may re-deliver a sale you already processed), THEN call
 		// configuration.StateStore.UpdateCompletedAsync(pending.ClientTransactionRef, recovered.Status).
 		// If this resume itself times out (recovered.Status == Unknown with no PollingUrlInvalid cause), the
-		// library leaves the record PENDING — do NOT complete it. The next recovery pass re-polls it, and a
-		// late-settling transaction is delivered then. Complete it yourself only once you have a real outcome
-		// (a later resume) or you have reconciled it (pass Unknown to accept the ambiguity and stop tracking).
-		// recovered.FailureCause == PollingUrlInvalid means the URL expired: the outcome is
-		// unknown — resolve it by manual reconciliation, then update the sentinel yourself.
+		// library leaves the record PENDING — do NOT complete it. A later recovery pass re-polls it and a
+		// late-settling transaction is delivered then, BUT only while the polling URL is still valid: its
+		// access token was measured to expire ~15 min from the original transaction, so run recovery promptly.
+		// Complete it yourself only once you have a real outcome (a later resume) or you have reconciled it
+		// (pass Unknown to accept the ambiguity and stop tracking).
+		// recovered.FailureCause == PollingUrlInvalid means the URL is no longer usable (typically the token
+		// expired ~15 min after the POST): the outcome can no longer be polled — resolve it by manual
+		// reconciliation, then update the sentinel yourself.
 	}
 	else
 	{
@@ -145,6 +148,7 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 
 - **The state store is load-bearing, not optional.** The library writes a sentinel *before* every transaction POST and refuses to send if that write fails — it is the only thing that makes a crash mid-transaction recoverable. The bundled `FileBasedTransactionStateStore` is a reference implementation (pre-sized records, transient-IO retry, atomic writes); production systems with a database should implement `ISmartConnectTransactionState` against it.
 - **The polling URL contains a bearer credential** (`merchantAccessToken`). The library never logs it; your state store persists it, so restrict access to wherever that lands. Never log it yourself.
+- **The polling URL has a short lifetime — run crash recovery promptly.** The embedded access token was measured (dev environment) to expire **~15 min from the transaction POST, not from completion**; after that a poll returns HTTP 401 "Token expired", which the library surfaces as `PollingUrlInvalid`. The transaction record is retained server-side (~180 days) but is then unreachable — there is no token re-issue and no query-by-id — so a resume attempted more than ~15 min after the original transaction can only report `Unknown`/`PollingUrlInvalid` for manual reconciliation. Resume pending records on startup, not on a slow timer.
 - **There is no idempotency key and no programmatic cancel in the SmartConnect API.** A timed-out POST may still have charged the customer — that is what `Unknown` is for. Do not blind-retry; route `Unknown` outcomes to manual reconciliation (there is no API that can resolve them for you — see the design doc).
 - **Logging:** supply an `ILogger` via `SmartConnectClientConfiguration.Logger` — normal operation, backoff, store trouble, and every ambiguous outcome are logged with the client transaction reference. Logging failures never affect transaction processing.
 
