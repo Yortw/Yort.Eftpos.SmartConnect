@@ -473,7 +473,10 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 
 	// Exercises the single _sync semaphore under real contention: interleaved writers (distinct refs) and
 	// readers must serialise without losing a write or leaking the semaphore. A leaked semaphore deadlocks
-	// every later call, so the wait is bounded — a regression fails in 10s rather than hanging the suite.
+	// every later call, so the wait is bounded — a regression fails in 30s rather than hanging the suite.
+	// The guard is 30s and not 10s deliberately: it only has to catch an *infinite* hang, and 10s false-fired
+	// on a 2-core CI runner where these 80 serialised file operations legitimately took longer (2026-07-31,
+	// net8 leg red on main while net48 passed in the same run). Don't tighten it back without that context.
 	[Fact]
 	public async Task ConcurrentOperations_AreSerialisedWithoutLossOrDeadlock()
 	{
@@ -484,7 +487,7 @@ public sealed class FileBasedTransactionStateStoreTests : IDisposable
 		var reads = Enumerable.Range(0, count).Select(_ => (Task)store.GetPendingTransactionsAsync());
 		var all = Task.WhenAll(writes.Concat(reads).ToArray());
 
-		var finished = await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(10)));
+		var finished = await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(30)));
 		Assert.Same(all, finished); // completed, not the deadlock guard
 		await all;                  // observe any faulted operation
 
