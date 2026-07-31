@@ -92,6 +92,7 @@ public sealed class SmartConnectProgressDialog : IDisposable
 
 	/// <summary>Shows the outcome of a financial transaction; the call returns after the given delay if the
 	/// operator does not acknowledge it first (the dialog window is dismissed on <see cref="Dispose"/>).</summary>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="autoCloseAfter"/> is not positive.</exception>
 	public Task ShowResultAsync(SmartConnectTransactionResult result, TimeSpan autoCloseAfter)
 	{
 		return ShowResultAsync(result, (TimeSpan?)autoCloseAfter);
@@ -105,6 +106,7 @@ public sealed class SmartConnectProgressDialog : IDisposable
 
 	/// <summary>Shows the outcome of a non-financial operation; the call returns after the given delay if the
 	/// operator does not acknowledge it first (the dialog window is dismissed on <see cref="Dispose"/>).</summary>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="autoCloseAfter"/> is not positive.</exception>
 	public Task ShowResultAsync(SmartConnectOperationResult result, TimeSpan autoCloseAfter)
 	{
 		return ShowResultAsync(result, (TimeSpan?)autoCloseAfter);
@@ -124,8 +126,9 @@ public sealed class SmartConnectProgressDialog : IDisposable
 			throw new ArgumentNullException(nameof(result));
 		}
 
+		ValidateAutoClose(autoCloseAfter);
 		EnsureAppearanceAndOwner();
-		var visual = ResultVisuals.ForTransaction(result.Status, (IReadOnlyDictionary<SmartConnectTransactionStatus, string>)TransactionResultCaptions);
+		var visual = ResultVisuals.ForTransaction(result.Status, result.ErrorMessage, (IReadOnlyDictionary<SmartConnectTransactionStatus, string>)TransactionResultCaptions);
 		return _controller.ShowResultAsync(visual, autoCloseAfter);
 	}
 
@@ -136,9 +139,22 @@ public sealed class SmartConnectProgressDialog : IDisposable
 			throw new ArgumentNullException(nameof(result));
 		}
 
+		ValidateAutoClose(autoCloseAfter);
 		EnsureAppearanceAndOwner();
 		var visual = ResultVisuals.ForOperation(result.Status, result.ErrorMessage, (IReadOnlyDictionary<SmartConnectOperationStatus, string>)OperationResultCaptions);
 		return _controller.ShowResultAsync(visual, autoCloseAfter);
+	}
+
+	// Validate the auto-close span up front. DialogTimeouts.ToIntervalMs enforces the same "must be positive"
+	// rule, but only deep inside the form — after the outcome panel is shown and the owner disabled — so a bad
+	// value there throws out of this public method having already mutated UI and left a task nothing completes.
+	// Rejecting it here keeps an invalid span from touching anything, with the same documented exception.
+	private static void ValidateAutoClose(TimeSpan? autoCloseAfter)
+	{
+		if (autoCloseAfter.HasValue && autoCloseAfter.Value <= TimeSpan.Zero)
+		{
+			throw new ArgumentOutOfRangeException(nameof(autoCloseAfter), "The auto-close duration must be positive.");
+		}
 	}
 
 	private void OnFirstShow()

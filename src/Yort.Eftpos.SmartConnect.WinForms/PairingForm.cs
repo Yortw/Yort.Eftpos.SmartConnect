@@ -93,6 +93,14 @@ internal sealed class PairingForm : Form, IPairingView
 
 	public Task<string?> GetCodeAsync()
 	{
+		if (IsDisposed)
+		{
+			// Disposed mid-flight (host shutdown / early using-scope exit) — mirror the sibling forms and
+			// resolve without touching disposed controls. Null reads as operator-cancel, so RunAsync ends
+			// cleanly rather than stranding the caller on a task nothing will complete.
+			return Task.FromResult<string?>(null);
+		}
+
 		ShowPromptControls();
 		if (!Visible)
 		{
@@ -129,6 +137,13 @@ internal sealed class PairingForm : Form, IPairingView
 
 	public Task<bool> ShowFailureAsync(string message, ResultSeverity severity)
 	{
+		if (IsDisposed)
+		{
+			// Disposed mid-flight — resolve as "don't retry" without mutating disposed controls or minting a
+			// TCS nothing would complete (which would hang RunAsync's caller).
+			return Task.FromResult(false);
+		}
+
 		HidePromptControls();
 		_message.Text = message;
 		_message.ForeColor = severity == ResultSeverity.Ambiguous ? Color.DarkGoldenrod : Color.Firebrick;
@@ -148,6 +163,13 @@ internal sealed class PairingForm : Form, IPairingView
 
 	public Task ShowSuccessAsync(SmartConnectPairingResult result)
 	{
+		if (IsDisposed)
+		{
+			// Disposed mid-flight — nothing to acknowledge; resolve without minting a TCS nothing would
+			// complete (see GetCodeAsync).
+			return Task.CompletedTask;
+		}
+
 		HidePromptControls();
 		_message.Text = "Paired";
 		_message.ForeColor = Color.ForestGreen;

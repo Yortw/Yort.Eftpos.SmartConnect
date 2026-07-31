@@ -6,7 +6,10 @@ namespace Yort.Eftpos.SmartConnect;
 /// </summary>
 public enum SmartConnectFailureCause
 {
-	/// <summary>No failure-cause detail — the transaction has a normal outcome (including Declined).</summary>
+	/// <summary>No failure-cause detail. Carried by a normal outcome (including Declined), and also by an
+	/// <see cref="SmartConnectTransactionStatus.Unknown"/> produced by poll-budget exhaustion or client
+	/// dispose — there is no dedicated cause for those, so branch on
+	/// <see cref="SmartConnectTransactionStatus"/> first and treat an Unknown as "reconcile", never success.</summary>
 	None = 0,
 
 	/// <summary>SmartConnect answered with a 4xx verdict that the request was not processed (e.g. HTTP 400). Fix the request/configuration; blind retry will fail again. A 5xx/408 answer is NOT this — it maps to <see cref="TransportUnknown"/>, because an intermediary can generate it after the service received the request.</summary>
@@ -34,8 +37,12 @@ public enum SmartConnectFailureCause
 
 	/// <summary>
 	/// SmartConnect answered the poll with a verdict that the polling URL itself is no good
-	/// (401/403/404/410) — the transaction's outcome cannot be learned by polling. Never blind-retry; the
-	/// outcome must be resolved by manual reconciliation (the sentinel stays pending until then).
+	/// (401/403/404/410) — the transaction's outcome cannot be learned by polling. The common case is an
+	/// expired access token: the token embedded in the polling URL was measured to expire ~15 min from the
+	/// original POST (not from completion), after which the poll returns HTTP 401 "Token expired". The
+	/// transaction record is retained server-side (~180 days) but is unreachable — there is no token re-issue
+	/// and no query-by-id. Never blind-retry; the outcome must be resolved by manual reconciliation (the
+	/// sentinel stays pending until then).
 	/// </summary>
 	PollingUrlInvalid = 5
 }

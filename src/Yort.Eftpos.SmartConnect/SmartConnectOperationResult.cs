@@ -19,8 +19,10 @@ public sealed class SmartConnectOperationResult : SmartConnectResult
 	public SmartConnectOperationStatus Status { get; init; } = SmartConnectOperationStatus.Unknown;
 
 	/// <summary>
-	/// A human-readable description of the failure when <see cref="Status"/> is
-	/// <see cref="SmartConnectOperationStatus.Failed"/>; otherwise null.
+	/// A human-readable description from the service when the operation did not succeed: the failure reason when
+	/// <see cref="Status"/> is <see cref="SmartConnectOperationStatus.Failed"/>, or the service/intermediary
+	/// message (e.g. a 5xx body) when it is <see cref="SmartConnectOperationStatus.Unknown"/>. Null when none was
+	/// available — a successful operation, or an Unknown from poll-timeout/dispose.
 	/// </summary>
 	public string? ErrorMessage { get; init; }
 }

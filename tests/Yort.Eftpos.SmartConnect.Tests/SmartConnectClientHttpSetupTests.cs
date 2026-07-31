@@ -75,10 +75,10 @@ public class SmartConnectClientHttpSetupTests
 	[Fact]
 	public void CreateHttpClient_InvalidUserAgentProductName_FallsBackRatherThanThrowing()
 	{
-		// "Ontempo Store" is a natural thing to configure but a space is not a valid HTTP token;
+		// "Demo Store" is a natural thing to configure but a space is not a valid HTTP token;
 		// the client must not blow up at construction over a cosmetic header.
 		var configuration = CreateConfiguration();
-		configuration.UserAgentProductName = "Ontempo Store";
+		configuration.UserAgentProductName = "Demo Store";
 		configuration.UserAgentProductVersion = "1.0";
 
 		using var httpClient = SmartConnectClient.CreateHttpClient(configuration);

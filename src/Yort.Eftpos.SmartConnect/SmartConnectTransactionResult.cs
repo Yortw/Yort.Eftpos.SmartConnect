@@ -18,12 +18,25 @@ public sealed class SmartConnectTransactionResult : SmartConnectResult
 	public SmartConnectFailureCause FailureCause { get; init; } = SmartConnectFailureCause.None;
 
 	/// <summary>
+	/// A human-readable failure reason from the service when the transaction did not complete (for example a
+	/// service rejection message such as "This register is not paired to a device", or a gateway/proxy message
+	/// on an ambiguous <see cref="SmartConnectTransactionStatus.Unknown"/> outcome). Null on success. This is
+	/// diagnostic/display text only — branch on <see cref="Status"/> and <see cref="FailureCause"/>, never on
+	/// this string.
+	/// </summary>
+	public string? ErrorMessage { get; init; }
+
+	/// <summary>
 	/// The id of the transaction actually being <em>reported</em>, when it differs from
 	/// <see cref="SmartConnectResult.TransactionId"/>. Populated from the response's <c>ReferenceId</c> field,
 	/// which <c>Journal.GetTransResult</c> uses to carry the reported (last) transaction's id while the
 	/// envelope <see cref="SmartConnectResult.TransactionId"/> identifies the journal query itself (ADR
 	/// Decision 10). Null on the normal transaction path, where
-	/// <see cref="SmartConnectResult.TransactionId"/> already identifies the transaction.
+	/// <see cref="SmartConnectResult.TransactionId"/> already identifies the transaction. This is the device's
+	/// id for the transaction it chose to report — it is NOT a correlation key to your own sale (your
+	/// transaction's id is server-generated and, in the crash case, was never persisted), so never use it to
+	/// decide a recovered transaction is yours; the journal result is diagnostic evidence for manual
+	/// reconciliation only.
 	/// </summary>
 	public string? ReferenceId { get; init; }
 

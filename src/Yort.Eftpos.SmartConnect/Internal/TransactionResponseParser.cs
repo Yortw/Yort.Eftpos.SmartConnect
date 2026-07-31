@@ -31,6 +31,10 @@ internal sealed class PollResult
 
 	/// <summary>The completed result; populated only when <see cref="Progress"/> is <see cref="PollProgress.Completed"/>.</summary>
 	public SmartConnectTransactionResult? Result { get; init; }
+
+	/// <summary>The envelope transaction id, surfaced for every poll (not only completed ones) so a caller
+	/// that seeded no id (the resume path) can still report which transaction a non-terminal exit concerns.</summary>
+	public string? TransactionId { get; init; }
 }
 
 /// <summary>
@@ -67,7 +71,7 @@ internal static class TransactionResponseParser
 			if (!Eq(GetString(root, "transactionStatus"), "COMPLETED"))
 			{
 				var progress = hasData && IsDelayed(data) ? PollProgress.Delayed : PollProgress.Pending;
-				return new PollResult { Progress = progress };
+				return new PollResult { Progress = progress, TransactionId = GetString(root, "transactionId") };
 			}
 
 			if (!hasData)
@@ -76,7 +80,7 @@ internal static class TransactionResponseParser
 				return new PollResult
 				{
 					Progress = PollProgress.Completed,
-					Result = new SmartConnectTransactionResult { Status = SmartConnectTransactionStatus.Unknown }
+					Result = new SmartConnectTransactionResult { Status = SmartConnectTransactionStatus.Unknown, TransactionId = GetString(root, "transactionId") }
 				};
 			}
 

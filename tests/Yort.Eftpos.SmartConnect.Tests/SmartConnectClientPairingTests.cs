@@ -38,7 +38,7 @@ public class SmartConnectClientPairingTests
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSRegisterName = "Register 1",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo"
+			POSVendorName = "DemoVendor"
 		};
 	}
 
@@ -114,7 +114,7 @@ public class SmartConnectClientPairingTests
 		// Literal expected body — deliberately NOT computed via FormUrlEncoder, so an encoding defect in
 		// the library cannot self-confirm here.
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSRegisterName=Register%201&POSBusinessName=Demo%20Business&POSVendorName=Ontempo",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSRegisterName=Register%201&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor",
 			handler.Requests[0].Body);
 	}
 
@@ -129,7 +129,7 @@ public class SmartConnectClientPairingTests
 		await client.PairAsync("12345678", request);
 
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor",
 			handler.Requests[0].Body);
 	}
 
@@ -184,6 +184,25 @@ public class SmartConnectClientPairingTests
 		Assert.False(result.Success);
 		Assert.NotNull(result.ErrorMessage);
 		Assert.Contains("500", result.ErrorMessage);
+	}
+
+	[Fact]
+	public async Task PairAsync_HttpErrorWithBadCharsetHeader_RecoversBodyAsMessage()
+	{
+		// (I2/F6) A rejected pairing whose declared charset is unusable but whose bytes are valid UTF-8 must
+		// recover the body and surface it as the failure message, never a raw InvalidOperationException.
+		var handler = new MockHttpHandler(_ =>
+		{
+			var content = new StringContent("register already paired", Encoding.UTF8, "application/json");
+			content.Headers.ContentType!.CharSet = "foo-bar";
+			return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = content });
+		});
+		using var client = new SmartConnectClient(CreateConfiguration(handler));
+
+		var result = await client.PairAsync("12345678", CreatePairingRequest());
+
+		Assert.False(result.Success);
+		Assert.Equal("register already paired", result.ErrorMessage);
 	}
 
 	[Fact]
