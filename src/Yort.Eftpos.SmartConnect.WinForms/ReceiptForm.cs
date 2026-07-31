@@ -70,7 +70,9 @@ internal sealed class ReceiptForm : Form
 			return Task.CompletedTask;
 		}
 
-		_receipt.Text = receipt ?? string.Empty;
+		// SmartConnect delivers LF-delimited receipts, but the multiline TextBox only line-breaks on CRLF
+		// (a lone LF renders as a glyph and collapses the receipt to one line) — normalize before binding.
+		_receipt.Text = ReceiptText.NormalizeLineEndings(receipt);
 		LayoutToContent();
 
 		// F4-style pre-emption (as ProgressForm.ShowResultAsync): a second call must complete the prior

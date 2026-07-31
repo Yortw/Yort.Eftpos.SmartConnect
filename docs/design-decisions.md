@@ -11,7 +11,7 @@ evaluating the library would want.
 > and are referenced from code comments and XML docs; gaps in the rationale of a decision usually
 > mean the omitted detail was consumer-specific.
 
-**Status:** Accepted · **Last updated:** 2026-06-17
+**Status:** Accepted · **Last updated:** 2026-07-24
 
 The library wraps the **SmartPay / Shift4 SmartConnect** (New Zealand) cloud REST API: a register
 is paired to a payment terminal, transactions are submitted with `POST /Transaction`, and the
@@ -298,6 +298,14 @@ one. That mapping is unsafe for intermediary-generated statuses, so the POST res
   and this decision's own rationale applies: a false `Unknown` costs one manual reconciliation; a false
   `Failed` ("blind retry will fail again") invites a re-tender over a possibly-live charge.
 
+Extended 2026-07-07 — the same split now applies to the **non-financial** POST path (`LogonAsync`,
+settlement inquiry/cutover, terminal status, journal, `ExecuteNonFinancialAsync`), which had also read every
+non-2xx as a rejection. A 5xx/408 there maps through to the operation result's `Unknown`; a 4xx maps to
+`Failed` and surfaces the service's error text. This matters most for the **state-changing settlement
+cutover**: a 5xx after the service received the request must be `Unknown` (the cutover may have executed),
+never `Failed` (which would invite a blind re-cutover). The non-financial path holds no sentinel, so there is
+nothing to leave pending — the caller owns reconciliation of the `Unknown`.
+
 The poll loop is unaffected (it already treated 5xx as transient and re-polled — it still holds a
 polling URL, so it *can* re-ask; the POST path cannot).
 
@@ -365,10 +373,12 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
   by **`AmountTotal`** — the only field carried across the gap (there is no shared id, and the terminal
   clock is unreliable for timestamp matching) — and on a non-match surface `Unknown` for reconciliation.
   A same-amount collision between two registers is unresolvable by this match; that residual risk folds
-  into Decision 6's known hole.
+  into Decision 6's known hole. *(Superseded — see the 2026-07-02 update below: amount matching is not
+  reliable evidence and no auto-adopt is sanctioned; the journal is diagnostic only.)*
 - **Library support:** `SmartConnectTransactionResult.ReferenceId` surfaces the reported (recovered)
   transaction's id distinctly from the query's `TransactionId`; `AmountTotal` is the documented match
-  field, and `GetLastTransactionResultAsync` documents the device-scoped semantics.
+  field *(superseded — see the 2026-07-02 update: amount matching is not reliable and no auto-adopt is
+  sanctioned)*, and `GetLastTransactionResultAsync` documents the device-scoped semantics.
 
 ### Update (2026-06-17) — recovery contract hardened; `SaleData` ruled out as a key
 
@@ -376,7 +386,8 @@ Probed directly against a physical PAX S920, with a two-register reproduction:
   a *candidate* plus its match evidence (`ReferenceId`, `AmountTotal`); it makes no adopt decision and never
   asserts "this is yours." A recovery layer exists to *prevent* false certainty, so silently attaching the
   device's last transaction to our sale would defeat its purpose. The caller match-before-adopts (today:
-  `AmountTotal`) and resolves anything short of a confident match to `Unknown`.
+  `AmountTotal`) and resolves anything short of a confident match to `Unknown`. *(Superseded — see the
+  2026-07-02 update: no auto-adopt is sanctioned at all; amount matching is not reliable evidence.)*
 - **How the caller confirms a candidate is a deferred, integrity-sensitive decision — not a glib prompt.** An
   "Is this your transaction? [Yes]" dialog to a busy operator degrades into a rubber-stamp, reintroducing the
   false certainty wearing a human fig-leaf. Whether to adopt automatically (single-register only), route to
@@ -488,6 +499,149 @@ So the line is redrawn:
 This both matches the vendor's model (`Acquirer.*` are documented *transaction types* hitting `POST /Transaction`)
 and simplifies the code. `SmartConnectOperationResult` remains justified by `Terminal.GetStatus`. The verification
 is exactly what surfaced the over-broad original line.
+
+---
+
+## Decision 12: The consumer finalizes the recovery sentinel (Case C)
+
+**Status:** Accepted 2026-07-08. Extends Decision 10's recovery model.
+
+### Context
+
+The completed-outcome path finalized the sentinel (moved it out of the pending/recovery scan) *before*
+returning the result. A consumer that records the outcome after the return — e.g. via a downstream event or
+decorator — can crash between the return and that durable write. Because the record is no longer pending,
+crash recovery never re-surfaces it, and a real outcome (an approval the customer was charged for, or a
+decline) is silently lost. "Returned" was being treated as "durably delivered".
+
+### Decision
+
+The library no longer finalizes a completed transaction's sentinel. On a completed-outcome poll result it
+returns the result with the record left **pending**; the consumer calls `UpdateCompletedAsync` only *after* it
+has durably recorded the outcome (persist-before-complete), then `RemoveAsync`. The library still closes the
+record itself on the paths a consumer cannot recover — a rejected or never-sent POST as `Failed`, poll
+exhaustion as `Unknown` *(exhaustion path superseded by Decision 13)* — and a store-refused pre-POST attempt persisted no record at all; so the consumer
+completes only the resolved outcomes it durably records, not every returned status. `RemoveAsync`'s terminal-only guard is
+unchanged. Scope is the completed-outcome path only — exhaustion (`MaxPollDuration`) still closes as
+`Unknown` *(superseded by Decision 13, which leaves an exhausted record pending too)*, and dispose already
+leaves the record pending.
+
+### Rationale
+
+A completed transaction's polling URL is idempotently re-pollable *within the access token's lifetime*
+(measured at ~15 min from the POST — see the 2026-07-24 update below), so a pending record is replayable during
+that window: a crash before the consumer finalizes just means recovery re-polls and re-delivers the same
+outcome. Deferring the finalize to after the consumer's durable write closes the window structurally rather
+than alerting on its symptom. Self-healing: a failed `UpdateCompletedAsync` after a good persist is retried by
+replay — provided the replay lands before the token expires.
+
+### Trade-offs Accepted
+
+- The library no longer guarantees the pending set drains — that is now the consumer's responsibility. A
+  consumer that never calls `UpdateCompletedAsync` accumulates pending records that recovery re-polls on every
+  pass; consumers should monitor pending-record age.
+- The pending window now spans return→consumer-complete, so a consumer's recovery sweep can overlap a live
+  operation for the same reference and re-deliver. Idempotent-by-`clientTransactionRef` persistence is the
+  required mitigation; the library deliberately does not serialize (it is stateless per call).
+- Moving completion ownership to the consumer is a contract change to `ISmartConnectTransactionState` affecting
+  every consumer.
+
+### Options Considered
+
+| Option | Verdict | Reason |
+|---|---|---|
+| **Consumer finalizes (return + explicit complete)** | **Selected** | Closes the window structurally; fits a return-based consumer as a reorder; the consumer can make persist+complete atomic; no new API, no guard change |
+| Callback/event delivery (library invokes a handler, finalizes on its success) | Rejected | Needs a consumer-side persist-confirmation point the library can call back into; forces control inversion and a persistence-pipeline restructure; returning a result alongside re-invites the loss |
+| Non-breaking new "return-without-closing" entry point | Rejected | Spends permanent API surface to avoid a break that is free pre-1.0 with no stable consumers |
+| Uniform "library never finalizes" (incl. the exhaustion path) | Done — see Decision 13 | Followed up immediately after Case C: extends leave-pending to poll exhaustion, closing the recovery-exhaustion window |
+
+### Update (2026-07-24) — polling-URL lifetime measured (~15 min from the POST)
+
+The "idempotently re-pollable" property this decision (and the resume-by-polling-URL recovery of Decisions 10
+and 13) leans on was previously stated with **no time bound**. It has now been measured live against the dev
+pinpad (`api-dev.smart-connect.cloud`) with a poll-until-expiry probe (raw `HttpClient` GET, bypassing the
+library's own status mapping — samples demo menu 14):
+
+- The polling URL carries the `merchantAccessToken` in its query string, and that token expires **~15 minutes
+  from the transaction START (the POST), not from completion**. A real `Card.Purchase`'s persisted polling
+  URL, polled every 60s, returned HTTP 200 with the full COMPLETED result through age 14m41s, then HTTP 401
+  with body `{"error":"Token expired"}` from 15m41s, stable across three consecutive polls
+  (15m41s / 16m41s / 17m42s).
+- Every 200 body carried a top-level `RecordExpiry` ~180 days out (~2027-01-19). So the transaction **record**
+  is retained ~6 months server-side — but with the token expired, no token re-issue, and no query-by-id, the
+  outcome is **unreachable by the POS after ~15 min**.
+
+Consequences:
+
+- Re-pollability (this decision) and recovery-by-resume (Decisions 10 and 13) are **time-bounded to ~15 min
+  from the POST**, not indefinite. A consumer's persist-then-complete window, and any recovery pass, must
+  re-poll within that window. Past it the poll returns HTTP 401 → `PollingUrlInvalid`, and the outcome is
+  manual-reconciliation only (the record survives server-side but cannot be reached).
+- This **validates** the `PollingUrlInvalid` handling (401/403/404/410 → leave the record pending, never a
+  false `Declined`) against real behaviour: an expired token surfaces as exactly that — a "cannot determine
+  the outcome" verdict — not as a decline or a spurious success.
+
+---
+
+## Decision 13: The library never finalizes on poll exhaustion either (uniform never-finalize)
+
+**Status:** Accepted 2026-07-08. Completes the uniform-never-finalize option Decision 12 deferred.
+
+### Context
+
+Decision 12 stopped the library finalizing the sentinel on the completed-outcome path but left the
+poll-exhaustion (`MaxPollDuration`) path finalizing the record as `Unknown`. Both `ProcessTransactionAsync` and
+`ResumePollingAsync` share the poll loop, so a recovery resume that itself exhausts (a slow pinpad or a network
+outage) closed the record and dropped it from the pending scan — the next recovery pass never retried it, even
+though the transaction might settle moments later. A real late outcome was silently lost: the recovery-exhaustion
+window.
+
+### Decision
+
+The exhaustion branch no longer finalizes. It returns `Unknown` and leaves the record pending, on both the
+first-poll and resume paths. The rule is now uniform for any exit that could still hold a live outcome: the library leaves the record
+pending and the consumer owns the pending set (dispose, POST-phase `TransportUnknown`, `PollingUrlInvalid`,
+completed outcomes, and now poll exhaustion all leave it pending). The one path the library still finalizes
+itself is the provably rejected or never-sent POST, which completes as `Failed` (Decision 12) — there is no
+live outcome to recover there. The consumer drains an exhaustion record via the existing `UpdateCompletedAsync`
+— a real status once a later recovery poll or reconciliation supplies one, or `Unknown` to accept the ambiguity
+and stop tracking. No new API; `RemoveAsync`'s terminal-only guard unchanged; the returned result shape
+(`Unknown`/`None`) unchanged. There is no `CancellationToken` on the poll methods (Decision 3): dispose, not cancellation, is the sanctioned
+way to abandon a wait, and dispose too leaves the record pending — so no poll-loop exit drops a record that
+might still settle. A companion change on this branch has the poll loop harvest the transaction id from poll
+bodies, so a non-completed exit (exhaustion, `PollingUrlInvalid`) now reports it on the resume path too, which
+previously seeded no id; the `Status`/`FailureCause` shape is unchanged.
+
+### Rationale
+
+Exhaustion is a timeliness boundary for the live caller ("stop making the customer wait"), not a verdict that
+the transaction is dead. Returning `Unknown` (timeliness) and leaving the record pending (durability) are
+separable concerns; keeping both lets the caller act immediately while recovery can still discover a late
+outcome — as long as the resume poll lands within the polling URL's ~15-min lifetime (measured; see Decision
+12's 2026-07-24 update), past which the resume returns `PollingUrlInvalid` and the outcome is manual
+reconciliation. It closes the window structurally and collapses two finalization rules into one.
+
+### Trade-offs Accepted
+
+- A never-resolving exhaustion record is re-polled on every recovery pass (up to `MaxPollDuration` each while
+  the polling URL's token is still valid; once it expires — ~15 min from the POST, see Decision 12's 2026-07-24
+  update — the re-poll returns `PollingUrlInvalid` immediately, no spin) until the consumer completes it —
+  consumers must monitor pending-record age (the same duty Decision 12 introduced). That
+  duty is only dischargeable if the consumer's store records a per-record creation/last-attempt timestamp; the
+  interface does not require one, so a consumer store must add such a field to discharge the duty (a store
+  modelling only the interface's fields cannot compute age).
+- The pending set no longer self-drains on exhaustion.
+- Reverses a doc clause shipped days earlier (the exhaustion carve-out added when Decision 12 landed) — the cost
+  of having scoped Decision 12 narrowly on purpose.
+
+### Options Considered
+
+| Option | Verdict | Reason |
+|---|---|---|
+| **Consumer-driven, library never finalizes on exhaustion** | **Selected** | Closes the recovery-exhaustion window; one uniform rule |
+| Bounded auto-close (finalize after N attempts / max age) | Rejected | Reintroduces the finalize-and-drop loss, just deferred; picks an arbitrary N |
+| Split contract (completed consumer-finalized, exhaustion library-finalized = status quo) | Rejected | Leaves the recovery-exhaustion window open |
+| Distinct "abandon as unresolved" store signal (vs completing as `Unknown`) | Rejected (YAGNI) | The completion status already carries the distinction; add only if a consumer needs to branch on it |
 
 ---
 

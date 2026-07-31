@@ -77,7 +77,7 @@ public class SmartConnectClientResumeTests
 		{
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo"
+			POSVendorName = "DemoVendor"
 		};
 	}
 
@@ -116,15 +116,91 @@ public class SmartConnectClientResumeTests
 	}
 
 	[Fact]
-	public async Task Resume_CallsUpdateCompletedOnCompletion()
+	public async Task Resume_LeavesSentinelPendingOnCompletion()
 	{
+		// (Case C) The library no longer finalizes on a completed outcome — it leaves the sentinel pending for
+		// the consumer to complete after durably persisting. Recovery replays it if the consumer crashes first.
 		var store = StoreWithPendingSentinel();
 		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson)));
 		using var client = CreateClient(handler, store);
 
-		await client.ResumePollingAsync(PollUrl, Ref);
+		var result = await client.ResumePollingAsync(PollUrl, Ref);
 
-		Assert.Contains("UpdateCompleted:" + Ref + ":Accepted", store.CallLog);
+		Assert.Equal(SmartConnectTransactionStatus.Accepted, result.Status);
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
+	}
+
+	[Fact]
+	public async Task Resume_CompletedButNotFinalized_ReplaysTheSameOutcome_UntilConsumerCompletes()
+	{
+		// (Case C) The library leaves a completed transaction pending. If the consumer crashes before it marks
+		// completion, the row is still pending, so a second resume — via a FRESH client, as after a process
+		// restart — re-polls and replays the SAME terminal outcome. Only the consumer's UpdateCompletedAsync
+		// (after durable persist) moves it out of the pending scan. This pins the money-safety requirement
+		// (recoverable from durable state alone, F6) and that completing an already-completed record is
+		// idempotent (F7).
+		var store = StoreWithPendingSentinel();
+		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson)));
+
+		using (var client = CreateClient(handler, store))
+		{
+			var first = await client.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Accepted, first.Status);
+			Assert.Null(store.Records[Ref].Status);                                  // library did not finalize
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
+
+		// Fresh client = process restart: its only knowledge is the durable store row + polling URL.
+		using (var client2 = CreateClient(handler, store))
+		{
+			var replay = await client2.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Accepted, replay.Status);
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+
+			await store.UpdateCompletedAsync(Ref, replay.Status);                    // consumer persisted → complete
+			Assert.DoesNotContain(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+
+			await store.UpdateCompletedAsync(Ref, replay.Status);                    // idempotent double-complete
+			Assert.DoesNotContain(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
+	}
+
+	[Fact]
+	public async Task Resume_ExhaustsWhilePending_LeavesSentinelPending_ThenLaterResumeDeliversTheSettledOutcome()
+	{
+		// (Decision 13) The recovery-exhaustion window, closed. The first resume polls a still-PENDING
+		// transaction until MaxPollDuration and returns Unknown, but leaves the record pending. When the
+		// transaction later settles, a subsequent resume — via a FRESH client, as after a process restart —
+		// re-polls the same URL, now gets the terminal outcome, and the consumer completes it. If exhaustion
+		// had finalized the record (pre-Decision-13), it would have dropped from the pending scan and the
+		// settled outcome would have been lost.
+		var store = StoreWithPendingSentinel();
+		var settled = false;
+		var handler = new MockHttpHandler(_ =>
+			Task.FromResult(Json(HttpStatusCode.OK, settled ? AcceptedPollJson : PendingPollJson)));
+
+		using (var client = CreateClient(handler, store))
+		{
+			var exhausted = await client.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Unknown, exhausted.Status);   // timeliness signal
+			Assert.Null(store.Records[Ref].Status);                                  // library did NOT finalize
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
+
+		// The transaction settles after we gave up waiting.
+		settled = true;
+
+		// Fresh client = process restart: only knowledge is the durable store row + polling URL.
+		using (var client2 = CreateClient(handler, store))
+		{
+			var recovered = await client2.ResumePollingAsync(PollUrl, Ref);
+			Assert.Equal(SmartConnectTransactionStatus.Accepted, recovered.Status);  // late outcome recovered
+			Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+
+			await store.UpdateCompletedAsync(Ref, recovered.Status);                 // consumer persisted -> complete
+			Assert.DoesNotContain(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+		}
 	}
 
 	[Theory]
@@ -177,8 +253,11 @@ public class SmartConnectClientResumeTests
 	}
 
 	[Fact]
-	public async Task Resume_Timeout_ReturnsUnknownAndClosesSentinel()
+	public async Task Resume_Timeout_ReturnsUnknown_LeavesSentinelPending()
 	{
+		// (Decision 13) A recovery resume that itself exhausts must NOT drop the record from the pending scan —
+		// otherwise the next recovery pass never retries a transaction that may settle moments later (the
+		// recovery-exhaustion window). Caller still gets Unknown; record stays pending.
 		var store = StoreWithPendingSentinel();
 		var handler = new MockHttpHandler(_ => Task.FromResult(Json(HttpStatusCode.OK, PendingPollJson)));
 		using var client = CreateClient(handler, store);
@@ -186,7 +265,43 @@ public class SmartConnectClientResumeTests
 		var result = await client.ResumePollingAsync(PollUrl, Ref);
 
 		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
-		Assert.Contains("UpdateCompleted:" + Ref + ":Unknown", store.CallLog);
+		// (F5) No transport cause leaks on the resume path either.
+		Assert.Equal(SmartConnectFailureCause.None, result.FailureCause);
+		// ResumePollingAsync has no transactionId parameter and never looks the persisted TransactionId up from
+		// the store (by design — see Resume_NeverCallsSaveOrUpdatePollingDetails), so PollForResultAsync seeds
+		// its transactionId local as null. The poll loop harvests the id from each poll body instead, so the
+		// exhaustion result still carries the id the PENDING poll body reported ("txn-1" in PendingPollJson).
+		Assert.Equal("txn-1", result.TransactionId);
+		Assert.DoesNotContain(store.CallLog, e => e.StartsWith("UpdateCompleted:"));
+		Assert.Null(store.Records[Ref].Status);
+		Assert.Contains(await store.GetPendingTransactionsAsync(), p => p.ClientTransactionRef == Ref);
+	}
+
+	[Theory]
+	[InlineData("relative/path")]
+	[InlineData("foo:bar")]
+	[InlineData("file:///x")]
+	public async Task Resume_PresentButUnusableUrl_ReturnsPollingUrlInvalid_NeverThrows(string badUrl)
+	{
+		// (M3/F1/F8) A persisted polling URL is a runtime/data value, not a caller bug — a present-but-unusable
+		// one (relative, or a non-http scheme like foo:/file: that Uri.TryCreate(Absolute) would still accept
+		// but HttpClient would throw on) resolves to Unknown/PollingUrlInvalid, never a throw and never a send
+		// attempt. The pre-crash sentinel is left pending for manual reconciliation.
+		var store = StoreWithPendingSentinel();
+		var sent = 0;
+		var handler = new MockHttpHandler(_ =>
+		{
+			sent++;
+			return Task.FromResult(Json(HttpStatusCode.OK, AcceptedPollJson));
+		});
+		using var client = CreateClient(handler, store);
+
+		var result = await client.ResumePollingAsync(badUrl, Ref);
+
+		Assert.Equal(SmartConnectTransactionStatus.Unknown, result.Status);
+		Assert.Equal(SmartConnectFailureCause.PollingUrlInvalid, result.FailureCause);
+		Assert.Equal(0, sent);
+		Assert.Null(store.Records[Ref].Status);
 	}
 
 	[Fact]
@@ -217,7 +332,7 @@ public class SmartConnectClientResumeTests
 		Assert.Equal("https://unit.test/POS/Transaction", handler.Requests[0].Uri?.AbsoluteUri);
 		// Literal expected body (protocol-fake rule).
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Journal.GetTransResult",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Journal.GetTransResult",
 			handler.Requests[0].Body);
 	}
 

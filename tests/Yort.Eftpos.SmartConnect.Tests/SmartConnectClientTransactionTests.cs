@@ -43,7 +43,7 @@ public class SmartConnectClientTransactionTests
 			AmountTotal = Money.FromCents(1250),
 			POSRegisterID = "11111111-2222-3333-4444-555555555555",
 			POSBusinessName = "Demo Business",
-			POSVendorName = "Ontempo",
+			POSVendorName = "DemoVendor",
 			ClientTransactionRef = Ref
 		};
 	}
@@ -91,7 +91,7 @@ public class SmartConnectClientTransactionTests
 
 		// Literal expected body (protocol-fake rule): an encoding defect cannot self-confirm here.
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.Purchase&AmountTotal=1250",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Card.Purchase&AmountTotal=1250",
 			handler.Requests[0].Body);
 	}
 
@@ -107,7 +107,7 @@ public class SmartConnectClientTransactionTests
 		await client.ProcessTransactionAsync(request);
 
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.PurchasePlusCash&AmountTotal=1250&AmountCash=250",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Card.PurchasePlusCash&AmountTotal=1250&AmountCash=250",
 			handler.Requests[0].Body);
 	}
 
@@ -123,7 +123,7 @@ public class SmartConnectClientTransactionTests
 		await client.ProcessTransactionAsync(request);
 
 		Assert.Equal(
-			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.Refund&AmountTotal=1250",
+			"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Card.Refund&AmountTotal=1250",
 			handler.Requests[0].Body);
 	}
 
@@ -144,7 +144,7 @@ public class SmartConnectClientTransactionTests
 			await client.ProcessTransactionAsync(request);
 
 			Assert.Equal(
-				"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=Ontempo&TransactionMode=ASYNC&TransactionType=Card.Purchase&AmountTotal=1250",
+				"POSRegisterID=11111111-2222-3333-4444-555555555555&POSBusinessName=Demo%20Business&POSVendorName=DemoVendor&TransactionMode=ASYNC&TransactionType=Card.Purchase&AmountTotal=1250",
 				handler.Requests[0].Body);
 		}
 		finally
@@ -201,13 +201,15 @@ public class SmartConnectClientTransactionTests
 		Assert.NotEqual(SmartConnectFailureCause.TransportNotSent, result.FailureCause);
 		// The service refused it — terminal; the sentinel closes as Failed.
 		Assert.Equal(SmartConnectTransactionStatus.Failed, store.Records[Ref].Status);
+		// The service's rejection reason is surfaced so a consumer can show/log WHY it failed.
+		Assert.Equal("Invalid register", result.ErrorMessage);
 	}
 
 	[Theory]
 	[InlineData(HttpStatusCode.Unauthorized)]
 	[InlineData(HttpStatusCode.Forbidden)]
 	[InlineData(HttpStatusCode.NotFound)]
-	[InlineData(HttpStatusCode.TooManyRequests)]
+	[InlineData((HttpStatusCode)429)] // HttpStatusCode.TooManyRequests is not defined on net48
 	public async Task Process_Http4xx_ReturnsFailedServiceError_SentinelClosed(HttpStatusCode status)
 	{
 		// The 4xx bucket is a genuine verdict that the request was NOT processed (429 included:
@@ -221,6 +223,9 @@ public class SmartConnectClientTransactionTests
 		Assert.Equal(SmartConnectTransactionStatus.Failed, result.Status);
 		Assert.Equal(SmartConnectFailureCause.ServiceError, result.FailureCause);
 		Assert.Equal(SmartConnectTransactionStatus.Failed, store.Records[Ref].Status);
+		// A bodyless rejection still surfaces a reason (the status line) rather than null.
+		Assert.False(string.IsNullOrEmpty(result.ErrorMessage));
+		Assert.Contains(((int)status).ToString(), result.ErrorMessage);
 	}
 
 	[Theory]
@@ -253,6 +258,9 @@ public class SmartConnectClientTransactionTests
 		Assert.Null(store.Records[Ref].Status);
 		// Diagnosability: an ambiguous outcome is always logged as an Error with the ref.
 		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains(Ref));
+		// The gateway/proxy reason is surfaced on the Unknown result too (diagnostic text only).
+		Assert.False(string.IsNullOrEmpty(result.ErrorMessage));
+		Assert.Contains(((int)status).ToString(), result.ErrorMessage);
 	}
 
 	[Fact]

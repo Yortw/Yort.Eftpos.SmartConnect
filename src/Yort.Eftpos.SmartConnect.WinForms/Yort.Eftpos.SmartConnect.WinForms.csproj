@@ -11,7 +11,7 @@
        This package versions independently of the core client. -->
   <PropertyGroup>
     <PackageId>Yort.Eftpos.SmartConnect.WinForms</PackageId>
-    <Version>0.1.0-preview.5</Version>
+    <Version>0.1.0-preview.8</Version>
     <Description>WinForms progress/outcome, pairing, and receipt dialogs for the unofficial Yort.Eftpos.SmartConnect client (SmartPay / Shift4 SmartConnect, New Zealand). Not affiliated with or endorsed by Shift4 / SmartPay.</Description>
     <PackageTags>eftpos;smartconnect;smartpay;shift4;winforms;pos;nz</PackageTags>
   </PropertyGroup>
