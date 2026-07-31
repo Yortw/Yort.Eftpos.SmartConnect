@@ -11,7 +11,7 @@ evaluating the library would want.
 > and are referenced from code comments and XML docs; gaps in the rationale of a decision usually
 > mean the omitted detail was consumer-specific.
 
-**Status:** Accepted · **Last updated:** 2026-07-24
+**Status:** Accepted · **Last updated:** 2026-07-31
 
 The library wraps the **SmartPay / Shift4 SmartConnect** (New Zealand) cloud REST API: a register
 is paired to a payment terminal, transactions are submitted with `POST /Transaction`, and the
@@ -679,6 +679,22 @@ reconciliation. It closes the window structurally and collapses two finalization
   the documented API contract is identical and has nowhere to carry an extra credential, so there is nothing
   environment-specific for the library to implement. `SmartConnectClientConfiguration.AuthorizeRequestAsync`
   remains as a defensive, non-breaking seam only — not because anything indicates a credential is needed.
+- **Decline reasons — probed live 2026-07-28, there is no machine-readable one.** Shift4's worked examples show a
+  `ResultText` field on the completed-transaction data object (one example carries "Transaction takes longer than
+  usual" on an `OK-ACCEPTED` result), raising the question of whether it holds a decline reason worth showing a POS
+  operator. It does not. `ResultText` is absent from the vendor's documented Data Object table — it appears only in
+  their examples — and probed against the dev terminal it was **absent from `Accepted`, `Declined` and `Cancelled`
+  responses alike**. So **a declined transaction carries no machine-readable reason at all**: the reason appears only
+  as free text inside `data.Receipt` (observed: `"UNABLE TO PROCESS"`). A consumer that wants to tell an operator
+  *why* a payment declined must render or parse the receipt text. There is nothing stable to map, so no typed
+  reason property was added; `SmartConnectTransactionStatus.Declined` remains a bare, final outcome.
+- **The vendor's worked examples over-state the live response shape.** The same probe found the live
+  completed-transaction `data` object also omits `PosVendor`, `PosRegisterID`, `PosBusinessName`, `Company`,
+  `RequestTimestamp` and `ResponseTimestamp` — all present in the documented examples. Nothing the library reads is
+  affected: it never read those, and it takes `ResponseTimestamp` from the **envelope's** `transactionTimeStamp`,
+  not from the data object. The general lesson is the point — **a field seen only in a worked example must be
+  confirmed against a live response before anything is designed against it**, the same way `SaleData`'s journal
+  echo and the client-reference field were (both above).
 
 ### Still open
 
