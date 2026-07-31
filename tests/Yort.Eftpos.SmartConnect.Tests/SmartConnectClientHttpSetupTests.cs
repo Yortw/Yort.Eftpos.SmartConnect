@@ -1,8 +1,8 @@
 using System;
 using System.Linq;
 using System.Net;
-using NSubstitute;
 using Xunit;
+using Yort.Eftpos.SmartConnect.Tests.Helpers;
 
 namespace Yort.Eftpos.SmartConnect.Tests;
 
@@ -17,7 +17,7 @@ public class SmartConnectClientHttpSetupTests
 		return new SmartConnectClientConfiguration
 		{
 			BaseUrl = new Uri("https://unit.test/POS"),
-			StateStore = Substitute.For<ISmartConnectTransactionState>()
+			StateStore = new InMemoryTransactionStateStore()
 		};
 	}
 
