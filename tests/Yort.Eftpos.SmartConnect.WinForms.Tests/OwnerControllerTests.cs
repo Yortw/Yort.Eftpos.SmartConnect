@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows.Forms;
 using Xunit;
 using Yort.Eftpos.SmartConnect.WinForms;
@@ -43,6 +44,50 @@ public class OwnerControllerTests
 
 		controller.Restore();
 		Assert.Single(calls);
+	}
+
+	[Fact]
+	public void TwoControllersSharingAnOwner_OwnerReenabledOnlyWhenTheLastReleases()
+	{
+		// Two dialogs disabling the same owner: EnableWindow is absolute, so without reference-counting the
+		// first Restore() would re-enable the owner while the second dialog is still busy — defeating the
+		// modal-like guarantee. The owner must be disabled once (by the first) and re-enabled once (by the
+		// last), with the inner disable/restore recording no native call.
+		var calls = new List<(IntPtr handle, bool enabled)>();
+		var owner = new FakeWindow();
+		var a = new OwnerController(owner, disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
+		var b = new OwnerController(owner, disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
+
+		a.Disable();            // first disabler: actually disables
+		b.Disable();            // second disabler: no native call, just holds a reference
+		Assert.Equal(new[] { (new IntPtr(42), false) }, calls);
+
+		b.Restore();            // not the last: owner must STAY disabled
+		Assert.Single(calls);   // still just the one disable — no premature re-enable
+
+		a.Restore();            // last disabler releases: now re-enable
+		Assert.Equal(2, calls.Count);
+		Assert.Equal((new IntPtr(42), true), calls[1]);
+	}
+
+	[Fact]
+	public void DistinctOwnersWithTheSameHandleValue_AreCountedIndependently()
+	{
+		// The depth is keyed on the owner OBJECT, not its HWND value (which Windows reuses). Two *different*
+		// owner windows that happen to report the same handle must each be disabled and restored on their own
+		// — never deduped by a shared handle value, or a leaked count from one owner could silently skip
+		// disabling a later, unrelated owner mid-transaction. Both FakeWindows report handle 42.
+		var calls = new List<(IntPtr handle, bool enabled)>();
+		var a = new OwnerController(new FakeWindow(), disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
+		var b = new OwnerController(new FakeWindow(), disableWhileBusy: () => true, (h, e) => calls.Add((h, e)));
+
+		a.Disable();
+		b.Disable();
+		Assert.Equal(2, calls.Count(c => !c.enabled));   // both disabled, not deduped by handle value
+
+		a.Restore();
+		b.Restore();
+		Assert.Equal(2, calls.Count(c => c.enabled));     // both re-enabled independently
 	}
 
 	[Fact]
