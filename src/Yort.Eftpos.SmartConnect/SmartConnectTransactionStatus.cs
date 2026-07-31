@@ -25,8 +25,10 @@ public enum SmartConnectTransactionStatus
 	/// <summary>
 	/// The transaction was declined by the terminal/issuer (a normal, final outcome — not an error).
 	/// Typical EFTPOS decline reasons include insufficient funds, an incorrect PIN, an invalid/unsupported
-	/// account type, or an expired card (illustrative examples — the specific reasons SmartConnect surfaces
-	/// are whatever the issuer/terminal reports, via the receipt text and raw response data).
+	/// account type, or an expired card — but SmartConnect surfaces no machine-readable decline reason to
+	/// branch on. Probed live (2026-07-28), a declined response carries no reason field at all; the reason
+	/// appears only as free text inside <see cref="SmartConnectTransactionResult.Receipt"/> (observed:
+	/// "UNABLE TO PROCESS"). Render the receipt to tell an operator why — do not expect a reason code.
 	/// </summary>
 	Declined,
 
