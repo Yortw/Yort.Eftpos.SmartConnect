@@ -29,7 +29,7 @@
        patched 8.0.5 floor (clears the NU1903 high-severity advisories flagged on 8.0.0) so this package's own
        restore graph and its consumers never resolve the vulnerable version. -->
   <ItemGroup>
-    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="System.Text.Json" Version="8.0.6" />
   </ItemGroup>
 
   <ItemGroup>
