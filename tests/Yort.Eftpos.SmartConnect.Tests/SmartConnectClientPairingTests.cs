@@ -4,7 +4,6 @@ using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using NSubstitute;
 using Xunit;
 using Yort.Eftpos.SmartConnect.Tests.Helpers;
 
@@ -19,7 +18,7 @@ public class SmartConnectClientPairingTests
 		return new SmartConnectClientConfiguration
 		{
 			BaseUrl = BaseUrl,
-			StateStore = Substitute.For<ISmartConnectTransactionState>(),
+			StateStore = new InMemoryTransactionStateStore(),
 			HttpClient = new HttpClient(handler)
 		};
 	}
@@ -70,9 +69,9 @@ public class SmartConnectClientPairingTests
 	[Fact]
 	public async Task PairAsync_MakesNoStateStoreCalls()
 	{
-		// Pairing is not a transaction — it writes no crash-recovery sentinel. The other tests use a
-		// silent NSubstitute store that would hide an accidental store touch; pin the invariant with a
-		// recording store (its throw-hooks armed too, so a call would also fail loudly, not just log).
+		// Pairing is not a transaction — it writes no crash-recovery sentinel. The shared store the other
+		// tests use records an accidental store touch but does not fail on one; arm the throw-hooks here
+		// so a call fails loudly rather than only being logged.
 		var store = new InMemoryTransactionStateStore
 		{
 			ThrowOnSave = new InvalidOperationException("PairAsync must not write a sentinel"),
@@ -420,7 +419,7 @@ public class SmartConnectClientPairingTests
 		// Constructor must run Validate() — a missing BaseUrl fails fast, not at first request.
 		var configuration = new SmartConnectClientConfiguration
 		{
-			StateStore = Substitute.For<ISmartConnectTransactionState>()
+			StateStore = new InMemoryTransactionStateStore()
 		};
 
 		Assert.Throws<ArgumentNullException>(() => new SmartConnectClient(configuration));

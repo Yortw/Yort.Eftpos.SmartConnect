@@ -1,6 +1,6 @@
 using System;
-using NSubstitute;
 using Xunit;
+using Yort.Eftpos.SmartConnect.Tests.Helpers;
 
 namespace Yort.Eftpos.SmartConnect.Tests;
 
@@ -9,7 +9,7 @@ public class SmartConnectClientConfigurationTests
 	private static SmartConnectClientConfiguration ValidConfig() => new SmartConnectClientConfiguration
 	{
 		BaseUrl = SmartConnectEnvironments.Development,
-		StateStore = Substitute.For<ISmartConnectTransactionState>()
+		StateStore = new InMemoryTransactionStateStore()
 	};
 
 	[Fact]
