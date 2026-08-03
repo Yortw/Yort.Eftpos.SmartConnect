@@ -11,7 +11,7 @@
        This package versions independently of the core client. -->
   <PropertyGroup>
     <PackageId>Yort.Eftpos.SmartConnect.WinForms</PackageId>
-    <Version>0.1.0-preview.8</Version>
+    <Version>0.1.0-preview.9</Version>
     <Description>WinForms progress/outcome, pairing, and receipt dialogs for the unofficial Yort.Eftpos.SmartConnect client (SmartPay / Shift4 SmartConnect, New Zealand). Not affiliated with or endorsed by Shift4 / SmartPay.</Description>
     <PackageTags>eftpos;smartconnect;smartpay;shift4;winforms;pos;nz</PackageTags>
   </PropertyGroup>
@@ -25,10 +25,13 @@
     <ProjectReference Include="..\Yort.Eftpos.SmartConnect\Yort.Eftpos.SmartConnect.csproj" />
   </ItemGroup>
 
-  <!-- This package does not use System.Text.Json directly, but the core brings it in transitively. Pin the
-       patched 8.0.5 floor (clears the NU1903 high-severity advisories flagged on 8.0.0) so this package's own
-       restore graph and its consumers never resolve the vulnerable version. -->
-  <ItemGroup>
+  <!-- net48 only. This package does not use System.Text.Json directly, but on net48 the core resolves to its
+       netstandard2.0 asset, which brings STJ in transitively — so pin the patched 8.0.5 floor (clears the NU1903
+       high-severity advisories flagged on 8.0.0) to keep the vulnerable version out of the restore graph.
+       On net8.0-windows the core resolves to its net8.0 asset, which references no STJ package at all, and the
+       framework supplies it in-box; referencing it there would reintroduce the package dependency this scoping
+       exists to avoid. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 

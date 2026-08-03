@@ -1,17 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <!-- netstandard2.0 is the reach target (.NET Framework 4.6.1+ through modern .NET). net8.0 exists purely so
+         modern consumers bind against the in-box System.Text.Json instead of dragging in the package (see below);
+         it adds no API. Keep the public API netstandard2.0-expressible so the two targets never diverge. -->
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
     <RootNamespace>Yort.Eftpos.SmartConnect</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <!-- Single TFM today; structured as <TargetFrameworks> so adding net8.0 later is a one-line, non-breaking change. Keep the public API netstandard2.0-expressible. -->
   </PropertyGroup>
 
   <!-- Package-specific metadata; shared metadata, LangVersion, Nullable and warning policy live in Directory.Build.props.
        This package versions independently of the WinForms companion. -->
   <PropertyGroup>
     <PackageId>Yort.Eftpos.SmartConnect</PackageId>
-    <Version>0.1.0-preview.8</Version>
+    <Version>0.1.0-preview.9</Version>
     <Description>Unofficial .NET client for the SmartPay / Shift4 SmartConnect (New Zealand) EFTPOS cloud REST API: pairs a POS register to a payment terminal and processes card transactions via an asynchronous polling model, with crash-recovery state and HTTP 429 backoff. Not affiliated with or endorsed by Shift4 / SmartPay.</Description>
     <PackageTags>eftpos;smartconnect;smartpay;shift4;payments;nz;pos</PackageTags>
   </PropertyGroup>
@@ -27,14 +29,24 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <!-- Both references below are explicit MINIMUM floors, deliberately not floating (8.0.*) and not exact-pinned
+       ([8.0.x]): in a library a PackageReference version is a >= minimum that NuGet floats UP to unify the
+       consumer's dependency graph. Floating is non-deterministic at build/pack; an exact pin causes consumer
+       version conflicts. -->
+
+  <!-- Applies to every TFM: Logging.Abstractions is not in-box anywhere (it ships in Microsoft.AspNetCore.App,
+       not Microsoft.NETCore.App). 8.0.0 is the lowest we build and test against. -->
   <ItemGroup>
-    <!-- Explicit MINIMUM floors, deliberately not floating (8.0.*) and not exact-pinned ([8.0.x]): in a library a
-         PackageReference version is a >= minimum that NuGet floats UP to unify the consumer's dependency graph.
-         Floating is non-deterministic at build/pack; an exact pin causes consumer version conflicts.
-         Microsoft.Extensions.Logging.Abstractions 8.0.0 is the lowest we build and test against.
-         System.Text.Json is floored at 8.0.5 — the patched 8.0.x that clears the high-severity advisories
-         (NU1903: GHSA-8g4q-xg66-9fp4, GHSA-hh2w-p6rv-4g7w) present in 8.0.0. Do not lower below the patched floor. -->
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+  </ItemGroup>
+
+  <!-- netstandard2.0 ONLY: System.Text.Json is part of the shared framework from .NET Core 3.0 onwards, so
+       referencing the package on net8.0 would override the in-box assembly and put a dependency in consumers'
+       graphs for nothing. Scoping it here means a net8.0 consumer takes zero package dependencies for JSON, and
+       is no longer coupled to this library's STJ floor when that floor next moves.
+       The floor is 8.0.5 — the patched 8.0.x that clears the high-severity advisories (NU1903:
+       GHSA-8g4q-xg66-9fp4, GHSA-hh2w-p6rv-4g7w) present in 8.0.0. Do not lower below the patched floor. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 

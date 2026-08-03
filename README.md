@@ -10,10 +10,25 @@ A .NET client library for the **SmartPay / Shift4 SmartConnect** EFTPOS integrat
 
 ## What it is
 
-- Targets **.NET Standard 2.0** (consumable by .NET Framework 4.6.1+ through modern .NET).
+- Targets **.NET Standard 2.0** (consumable by .NET Framework 4.6.1+ through modern .NET), with a **.NET 8** build so modern consumers use the in-box `System.Text.Json` and take no JSON package dependency.
 - Wraps the SmartConnect endpoints (`PUT /Pairing/{code}`, `POST /Transaction` + GET-poll) behind a small, testable client with built-in poll-interval handling, HTTP 429 backoff (`Retry-After` honoured), and per-poll progress reporting.
 - Treats declines/cancellations as **data** (a result status), and reserves exceptions for failures to obtain an answer.
 - Makes crash-recovery a first-class concern: the caller persists transaction state (including the polling URL) via an injected contract, the library refuses to send a transaction it could not first record, and polling can be resumed after a restart.
+
+## Installation
+
+Two packages ship from this repository. **The core client is all you need** — the WinForms package is entirely optional UI sugar, and nothing in the core depends on it.
+
+```
+dotnet add package Yort.Eftpos.SmartConnect
+```
+
+| Package | Required? | What it is | Targets |
+|---|---|---|---|
+| `Yort.Eftpos.SmartConnect` | **Yes** | The protocol client — pairing, transactions, polling, crash recovery. No UI. | `netstandard2.0`, `net8.0` |
+| `Yort.Eftpos.SmartConnect.WinForms` | Optional | Ready-made operator dialogs (progress, pairing, receipt) for WinForms POS apps. | `net48`, `net8.0-windows` |
+
+(Both are pre-release — see the note above. Versions are independent: each package bumps only when it changes.)
 
 ## The contract in one paragraph
 
@@ -143,6 +158,31 @@ foreach (var pending in await configuration.StateStore.GetPendingTransactionsAsy
 	}
 }
 ```
+
+## Optional: ready-made WinForms dialogs
+
+If your POS is a WinForms app, the companion package saves you writing the operator-facing screens. It is **optional** — the core client above is complete without it, and this package adds no capability, only UI.
+
+```
+dotnet add package Yort.Eftpos.SmartConnect.WinForms
+```
+
+It provides three dialogs: `SmartConnectProgressDialog` (a "please wait" screen driven by the poll progress, with a colour-coded outcome screen), `SmartConnectPairingDialog` (runs the whole prompt → attempt → retry-or-cancel loop), and `SmartConnectReceiptDialog` (a monospaced receipt viewer).
+
+The progress dialog attaches purely as the `IProgress` argument — your call and its result stay exactly as they were, which keeps the outcome-handling contract above unchanged:
+
+```csharp
+using var dialog = new SmartConnectProgressDialog(this) { WindowTitle = "EFTPOS" };
+
+// The real method, the real result. The dialog only observes.
+var result = await client.ProcessTransactionAsync(request, dialog.Progress);
+
+// Optional outcome screen; omit to suppress it. Green/amber/red by status —
+// Unknown is amber, because it still needs the explicit handling described above.
+await dialog.ShowResultAsync(result, TimeSpan.FromSeconds(5));
+```
+
+Dialogs must be constructed on the UI thread, and the consuming project needs `<UseWindowsForms>true</UseWindowsForms>`. Full documentation — appearance customisation, caption overrides, the pairing and receipt dialogs — is in the [package README](https://github.com/Yortw/Yort.Eftpos.SmartConnect/blob/main/src/Yort.Eftpos.SmartConnect.WinForms/README.md). To see every dialog state without a terminal, run the `Yort.Eftpos.SmartConnect.WinFormsGallery` sample.
 
 ## Things to know before going live
 
