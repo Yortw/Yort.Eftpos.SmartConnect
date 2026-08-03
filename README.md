@@ -186,6 +186,8 @@ Dialogs must be constructed on the UI thread, and the consuming project needs `<
 
 ## Things to know before going live
 
+SmartConnect is a *cloud* platform — the POS reaches the terminal through Shift4's service, not directly — and that differs enough from a directly-connected terminal that some assumptions carried over from other EFTPOS integrations no longer hold. The highlights are below; [integration-notes.md](https://github.com/Yortw/Yort.Eftpos.SmartConnect/blob/main/docs/integration-notes.md) works through each one in full, and is explicit about **what this library handles versus what your POS still has to solve**.
+
 - **The state store is load-bearing, not optional.** The library writes a sentinel *before* every transaction POST and refuses to send if that write fails — it is the only thing that makes a crash mid-transaction recoverable. The bundled `FileBasedTransactionStateStore` is a reference implementation (pre-sized records, transient-IO retry, atomic writes); production systems with a database should implement `ISmartConnectTransactionState` against it.
 - **The polling URL contains a bearer credential** (`merchantAccessToken`). The library never logs it; your state store persists it, so restrict access to wherever that lands. Never log it yourself.
 - **The polling URL has a short lifetime — run crash recovery promptly.** The embedded access token was measured (dev environment) to expire **~15 min from the transaction POST, not from completion**; after that a poll returns HTTP 401 "Token expired", which the library surfaces as `PollingUrlInvalid`. The transaction record is retained server-side (~180 days) but is then unreachable — there is no token re-issue and no query-by-id — so a resume attempted more than ~15 min after the original transaction can only report `Unknown`/`PollingUrlInvalid` for manual reconciliation. Resume pending records on startup, not on a slow timer.
@@ -198,9 +200,10 @@ Dialogs must be constructed on the UI thread, and the consuming project needs `<
 
 Two warnings: financial menu actions send **real transactions** to the connected terminal (the app echoes amounts and asks for confirmation first), and its state directory contains **bearer-token polling URLs** — don't commit it or attach it to bug reports. It multi-targets `net48` and `net8.0`; running the transport probe on both is how the cross-runtime failure-classification gets verified.
 
-## Design rationale
+## Further reading
 
-The *why* behind the API shape — the result-with-`Unknown` contract, the mandatory state-store, the transport `Delivery` classification, and the verified limits of `Journal.GetTransResult` (a diagnostic only — it cannot reliably identify a specific transaction) — is recorded in [docs/design-decisions.md](https://github.com/Yortw/Yort.Eftpos.SmartConnect/blob/main/docs/design-decisions.md).
+- **[Integration notes](https://github.com/Yortw/Yort.Eftpos.SmartConnect/blob/main/docs/integration-notes.md)** — what SmartConnect's cloud design means for a POS: pairing as an on-site step, behaviour when the internet is down, the absence of a POS-supplied transaction reference, the time-boxed recovery window, outcomes that cannot be determined programmatically, the absence of cancel and idempotency, and signature slips. Each section states what the library does and what you must build yourself.
+- **[Design decisions](https://github.com/Yortw/Yort.Eftpos.SmartConnect/blob/main/docs/design-decisions.md)** — the *why* behind the API shape: the result-with-`Unknown` contract, the mandatory state-store, the transport `Delivery` classification, and the verified limits of `Journal.GetTransResult` (a diagnostic only — it cannot reliably identify a specific transaction).
 
 ## Licence
 
