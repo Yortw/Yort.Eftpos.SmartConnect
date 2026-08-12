@@ -34,5 +34,5 @@ coordinate a fixed release and a disclosure timeline with you before any public 
 
 ## Supported versions
 
-The project is pre-1.0; only the latest published pre-release is supported. Fixes are made against
-the current `main` and released as a new package version rather than back-ported.
+Only the latest released version is supported. Fixes are made against the current `main` and released
+as a new package version rather than back-ported to earlier ones.

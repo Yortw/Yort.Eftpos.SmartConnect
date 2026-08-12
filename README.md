@@ -4,7 +4,7 @@
 
 A .NET client library for the **SmartPay / Shift4 SmartConnect** EFTPOS integration (New Zealand) — a cloud REST API that pairs a point-of-sale register to a payment terminal and processes card transactions via an asynchronous polling model.
 
-> ⚠️ **Pre-release.** Under active initial development and published as `-preview` versions. The public API may still change before 1.0 — pin an exact version if you build against it.
+> **Stable (1.0).** The public API is stable and follows [semantic versioning](https://semver.org): breaking changes ship only in a new major version.
 >
 > **Unofficial:** this is an independent, unofficial client library and is not affiliated with, endorsed by, or supported by Shift4 / SmartPay. "SmartConnect", "SmartPay", and "Shift4" are trademarks of their respective owners. The official API documentation is at <https://smartconnectdev.shift4.co.nz>.
 
@@ -28,7 +28,7 @@ dotnet add package Yort.Eftpos.SmartConnect
 | `Yort.Eftpos.SmartConnect` | **Yes** | The protocol client — pairing, transactions, polling, crash recovery. No UI. | `netstandard2.0`, `net8.0` |
 | `Yort.Eftpos.SmartConnect.WinForms` | Optional | Ready-made operator dialogs (progress, pairing, receipt) for WinForms POS apps. | `net48`, `net8.0-windows` |
 
-(Both ship as `-preview` versions — see the note above. The two version **independently**: each bumps only when it changes, so their numbers can differ.)
+(The two packages version **independently**: each bumps only when it changes, so their numbers can differ.)
 
 ## The contract in one paragraph
 
