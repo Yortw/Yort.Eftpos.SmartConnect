@@ -1,7 +1,7 @@
 name: Publish
 
-# Dormant until go-public: the push authenticates with NUGET_API_KEY, which does not exist yet, so a run
-# would fail at the push step. Publishing to a private feed stays manual in the interim.
+# Publishes to nuget.org on a release tag. The push authenticates with NUGET_API_KEY, held in the 'release'
+# environment; the push step still fails loudly rather than silently skipping if that secret goes missing.
 on:
   push:
     tags:
@@ -75,8 +75,10 @@ jobs:
         run: dotnet pack "${{ steps.resolve.outputs.project }}" -c Release --no-build -o ${{ runner.temp }}/nupkg
 
       # F1: assert exactly one package was produced and its version matches what was validated — closes the
-      # csproj-read-vs-MSBuild-eval seam, the single-package assumption, and the wildcard-push blast radius.
+      # csproj-read-vs-MSBuild-eval seam and the single-package assumption. Emits the resolved full path so the
+      # push below acts on the SAME file asserted here instead of re-resolving the directory for itself.
       - name: Verify packed artifact
+        id: verify
         shell: pwsh
         env:
           EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
@@ -87,16 +89,22 @@ jobs:
             throw "Packed '$($pkgs[0].Name)' does not match the validated version '$($env:EXPECTED_VERSION)'."
           }
           Write-Host "Packed $($pkgs[0].Name)"
+          "package=$($pkgs[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Push to NuGet
         shell: pwsh
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          PACKAGE_PATH: ${{ steps.verify.outputs.package }}
         run: |
           if (-not $env:NUGET_API_KEY) {
-            throw "NUGET_API_KEY secret is not configured — the publish workflow is dormant until go-public. Add it to the 'release' environment to enable publishing."
+            throw "NUGET_API_KEY secret is not configured. Add it to the 'release' environment to enable publishing."
           }
-          dotnet nuget push "${{ runner.temp }}/nupkg/*.nupkg" `
+          # Push the exact file the verify step resolved, never a wildcard. dotnet nuget push only expands globs
+          # when the path uses backslash separators; the old path joined runner.temp (D:\a\_temp) to /nupkg/*.nupkg,
+          # and that mixed form expanded to nothing and failed with "File does not exist". Get-ChildItem normalises
+          # the same mixed path happily, which is why the verify step could not catch it.
+          dotnet nuget push "$env:PACKAGE_PATH" `
             --source https://api.nuget.org/v3/index.json `
             --api-key $env:NUGET_API_KEY `
             --skip-duplicate
